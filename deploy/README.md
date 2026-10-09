@@ -1,6 +1,6 @@
 # Lichess Guard deployment
 
-GitHub publishes `ghcr.io/lesetjaricco-png/server:latest` after a merge. That publication does not deploy anything. The Ubuntu server is the only place that starts a container, and it does so on a short daily window. `latest` is only a candidate. The running container is pinned to an immutable `sha256` digest.
+GitHub publishes `ghcr.io/crossfoundation/impenetrable-fortress:latest` after a merge. That publication does not deploy anything. The Ubuntu server is the only place that starts a container, and it does so on a short daily window. `latest` is only a candidate. The running container is pinned to an immutable `sha256` digest.
 
 ## What runs where
 
@@ -60,7 +60,7 @@ The deployment logs must never contain this file. Do not paste it into GitHub or
 | `DECISION_TIME` | `00:00` | When the window opens, `HH:MM` |
 | `WINDOW_MINUTES` | `7` | Length of the window. It must not cross midnight |
 | `TIMEZONE` | `UTC` | Timezone used by the script |
-| `IMAGE_NAME` | `ghcr.io/lesetjaricco-png/server` | Registry image, without a tag |
+| `IMAGE_NAME` | `ghcr.io/crossfoundation/impenetrable-fortress` | Registry image, without a tag |
 | `CONTAINER_NAME` | `lichess-guard` | Production container name |
 | `HOST_PORT` | `8080` | Port on the server |
 | `CONTAINER_PORT` | `8080` | Port inside the container |
