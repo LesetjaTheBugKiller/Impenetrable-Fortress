@@ -38,16 +38,16 @@ The same variables can be set in Command Prompt with `set HOST=127.0.0.1` and `s
 
 GitHub Actions runs the Java tests. The MT5 scripts stay local; MetaEditor is not part of this pipeline.
 
-**CI** (`.github/workflows/ci.yml`) runs on every push and pull request. It executes `mvn verify` (all Java tests, then the shaded jar) and uploads that jar. `main` accepts updates only through a pull request whose **Test and package** check has passed. After that pull request is merged, the same workflow publishes `ghcr.io/lesetjaricco-png/server:latest` and `ghcr.io/lesetjaricco-png/server:<commit sha>`. Other branches build the image without publishing it.
+**CI** (`.github/workflows/ci.yml`) runs on every push and pull request. It executes `mvn verify` (all Java tests, then the shaded jar) and uploads that jar. `main` accepts updates only through a pull request whose **Test and package** check has passed. After that pull request is merged, the same workflow publishes `ghcr.io/crossfoundation/impenetrable-fortress:latest` and `ghcr.io/crossfoundation/impenetrable-fortress:<commit sha>`. Other branches build the image without publishing it.
 
 **Release** (`.github/workflows/release.yml`) is started from the Actions tab on `main`. Enter a version such as `1.2.0`. The workflow runs the tests, sets that version in `pom.xml`, commits it, pushes the annotated tag `v1.2.0`, publishes a GitHub Release with the jar attached, and pushes the image to GitHub Container Registry. A prerelease skips the `latest` image tag. Running the workflow again for a version that already has a tag rebuilds and republishes that tagged commit.
 
 The image name is the repository name in lowercase:
 
 ```text
-ghcr.io/lesetjaricco-png/server:1.2.0
-ghcr.io/lesetjaricco-png/server:v1.2.0
-ghcr.io/lesetjaricco-png/server:latest
+ghcr.io/crossfoundation/impenetrable-fortress:1.2.0
+ghcr.io/crossfoundation/impenetrable-fortress:v1.2.0
+ghcr.io/crossfoundation/impenetrable-fortress:latest
 ```
 
 The container listens on port 8080 and reads the same environment variables as the jar. Do not bake `.env` or tokens into the image. Pass them at runtime:
@@ -56,7 +56,7 @@ The container listens on port 8080 and reads the same environment variables as t
 docker run --rm -p 5001:8080 `
   -e AUTH_SHARED="your-shared-secret" `
   -e LICHESS_TOKEN="your-lichess-token" `
-  ghcr.io/lesetjaricco-png/server:1.2.0
+  ghcr.io/crossfoundation/impenetrable-fortress:1.2.0
 ```
 
 Before the first release, open the repository on GitHub and set **Settings → Actions → General → Workflow permissions** to **Read and write permissions**. The release job uses that permission to push the version commit, the git tag, the GitHub Release, and the container image. The package inherits this repository's visibility; change it later under **Packages** if you want a different audience.
