@@ -1,0 +1,11 @@
+target/
+.idea/
+*.iml
+.env
+*.ex5
+*.compile.log
+desk/bin/
+desk/desk.env
+desk/seal.json
+__pycache__/
+*.pyc

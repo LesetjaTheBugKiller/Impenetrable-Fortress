@@ -1,0 +1,263 @@
+INSTRUCTIONS FOR THE AGENT ON THE VPS
+Read this file first. Do not redesign the trading system. Finish the GitHub Team
+move and the live setup the owner already chose.
+
+WHO THIS IS FOR
+The owner will log into Cursor on the Windows VPS, open a new chat, and point
+you at this repository (or a copy). They will create a NEW GitHub account and a
+GitHub Team organization. That account is NOT the everyday Gmail that currently
+owns https://github.com/lesetjaricco-png/Server (public, personal).
+
+GOAL
+One private repository under the new Team org, same codebase, with:
+1. Tests and workflows locked so they cannot be edited on an ordinary push.
+2. Java gate source still editable through a pull request.
+3. main only updated by a PR whose "Test and package" check passed.
+4. The VPS running the Java guard and the MetaTrader 5 Receiver against that
+   new remote.
+5. A compiled Receiver.ex5 in the terminal data folder. If Receiver is already
+   on a chart, a new compile reloads it. Do not try to attach an EA from a
+   script.
+
+Do not split the Receiver into a second repository in this pass. Path locks in
+the one private repo are enough. Split later only if the owner asks after this
+setup works.
+
+DO NOT
+- Commit .env, desk/desk.env, tokens, app passwords, or seal.json.
+- Force-push main, skip hooks, or disable the required check to "get it green".
+- Install desk keeper on the home PC. Keeper is VPS only.
+- Install desk link / seal on the VPS. Link and the seal are home PC only.
+- Use OAuth for the weekend Gmail. The saved design is one time-locked app
+  password in a seal on the home PC.
+- Put the seal in OneDrive, Dropbox, Google Drive, or iCloud.
+- Change Java server trading jobs, receiver signal logic, or sender panel
+  behaviour except as needed to deploy what is already in the tree.
+- Copy secrets from the old public repo's local .env into git. Copy them only
+  onto the VPS disk, mode 600 equivalent.
+
+WHAT THIS SYSTEM IS
+Java HTTP service (Lichess Guard) plus MT5 Receiver (executes) and Sender
+(buttons). Server owns daily loss cap, profit target, max losses, spikes,
+cooldown, and "all positions at break-even". Receiver reports facts and sizes
+lots from equity * risk% / stop distance. Stops are silent (virtual). Take
+profit is visible on the ticket at 1:4. Daily profit target default is 6%
+(expected value of four trades, 1% risk, 50% win rate, 1:4). Loss cap default
+3%. Cooldown in the owner's local .env has been 0.2 minutes (12 seconds) for
+testing; production example is 5 minutes. Confirm with the owner before
+copying that value to the VPS.
+
+Weekend desk: desk/keeper on the VPS opens RDP (TCP 3389) only in a weekend
+window. desk/link on the home PC. Shared hours in desk/desk.env (from
+desk/desk.env.example). Official tle.exe is gitignored under desk/bin/.
+
+CURRENT PUBLIC REPO (SOURCE TO COPY, NOT THE LONG-TERM REMOTE)
+https://github.com/lesetjaricco-png/Server
+Default branch: main
+Active ruleset there: "protect main"
+  - target refs/heads/main
+  - no delete, no force-push
+  - required status check context "Test and package" (GitHub Actions app
+    integration_id 15368)
+  - require pull request, 0 approving reviews, merge/squash/rebase allowed
+  - empty bypass list
+CI job name that must stay required: "Test and package"
+CI command: mvn -B verify (Java 17). MQL5 tests are NOT in CI.
+On push to main, CI publishes
+  ghcr.io/<owner>/<repo>:latest
+  ghcr.io/<owner>/<repo>:<sha>
+using github.repository, so the new org name is picked up automatically if
+the workflow files are unchanged.
+deploy/IMAGE_NAME in deploy/README and deploy.env.example still say
+  ghcr.io/lesetjaricco-png/server
+Update those to ghcr.io/<NEW_ORG>/<NEW_REPO> on the first setup commit,
+BEFORE you lock deploy/.
+
+Ubuntu deploy (deploy/) pins a container to an image digest on a short daily
+window. That is for a Linux host. The trading VPS the owner is buying/using
+is Windows Server with MT5. Inspect the VPS first:
+  - If Windows + MT5: run the Java jar or a Windows container equivalent on
+    localhost:5001 (Receiver default BaseURL is http://127.0.0.1:5001). Do
+    not blindly run deploy/setup-ubuntu.sh.
+  - If they also have an Ubuntu box for GHCR: follow deploy/README.md there.
+Receiver and Sender WebRequest need that URL allowed in MT5
+  Tools → Options → Expert Advisors → Allow WebRequest.
+
+LIVE METATRADER DATA FOLDER (THIS OWNER'S CURRENT WINDOWS TERMINAL)
+C:\Users\micca\AppData\Roaming\MetaQuotes\Terminal\010E047102812FC0C18890992854220E\MQL5\
+Experts live names: receiver.mq5 / receiver.ex5, Sender.mq5 / Sender.ex5
+Includes live in MQL5\Include\Receiver*.mqh
+MetaEditor:
+  "C:\Program Files\MetaTrader 5 IC Markets Global\MetaEditor64.exe"
+Compile:
+  MetaEditor64.exe /compile:"<full path to mq5>" /log
+Copy repo mql5\Experts\Receiver.mq5 → live Experts\receiver.mq5
+Copy repo mql5\Include\Receiver*.mqh → live Include\
+Then compile live receiver.mq5. 0 errors required.
+On the VPS the Terminal hash folder will differ. Find it:
+  %APPDATA%\MetaQuotes\Terminal\<hash>\origin.txt
+  %APPDATA%\MetaQuotes\Terminal\<hash>\MQL5\Experts
+Do not compile only the git working copy. MT5 runs the data-folder copy.
+
+RECEIVER / SENDER INPUTS THAT MUST MATCH THE SERVER
+Receiver AUTH_SHARED input must equal server AUTH_SHARED.
+Receiver BaseURL must reach the Java process (localhost on the VPS).
+Sender ServerURL is the public URL the home MT5 uses to hit that server.
+Magic 20258008 unless the owner says otherwise.
+
+JAVA GATES (LOCKED BY TESTS)
+ReceiverGateEvaluator: schedule, daily loss cap (balance drop), daily profit
+target (dailyClosedNet), max losses, max spikes, cooldown (seconds since last
+loss), all-positions-at-break-even.
+After a loss, queued signals on cooldown are dropped.
+After a fill / auto-BE / close, receiver publishes state before /next so the
+BE gate is not stale.
+Tests live in src/test/java. Those files must be locked.
+
+OWNER DECISIONS ALREADY MADE
+- GitHub Team organization (about $4/user/month). Not Pro. Pro does not
+  clearly include push rulesets.
+- Private repository.
+- Lock tests for good.
+- Keep workflows and deploy config locked.
+- Allow gate source fixes (src/main/java) through PRs that still must pass
+  CI.
+- Do not use the everyday Gmail as the org owner.
+- Give the VPS agent gh + git SSH to the new org and let it run setup.
+
+STEP A — GITHUB TEAM ORG AND EMPTY PRIVATE REPO
+The owner creates, in the browser, while you wait if needed:
+  1. New GitHub user (not everyday Gmail).
+  2. New Organization on the Team plan. Attach the Team subscription to the
+     org, not to the old personal account.
+  3. Empty private repository in that org (do not add a README if you will
+     push an existing history).
+  4. A PAT or SSH key for that user with repo, workflow, and write:packages
+     as needed. Prefer SSH for git, PAT for gh api / packages.
+  5. On the VPS: gh auth login AND git ssh to github.com as the new user.
+     ssh -T git@github.com must show the NEW user, not lesetjaricco-png.
+
+You then:
+  - Confirm gh api user and gh org list.
+  - Confirm the new repo is private: gh repo view ORG/REPO --json isPrivate
+
+STEP B — COPY THIS CODEBASE
+From a clone of the current Server tree (this working copy is fine):
+  git remote -v
+  Add the new origin. Do not force-push unless the new repo is empty and the
+  owner asked to transplant history.
+  Preferred: push main and tags to the new remote, keep history.
+  git remote add team git@github.com:NEW_ORG/NEW_REPO.git
+  git push -u team main
+If the working copy has uncommitted trading/desk work the owner still needs,
+ask before leaving it behind. Do not push .env.
+
+After the first push, GitHub Actions on the new repo must be allowed:
+  Settings → Actions → General → Workflow permissions → Read and write
+  (needed to publish GHCR from ci.yml / release.yml).
+
+STEP C — FIRST SETUP COMMIT (BEFORE LOCKING PATHS)
+On a branch, PR into main after CI is green:
+  - Replace leftover lesetjaricco-png image names in deploy/README.md and
+    deploy/*.example with ghcr.io/NEW_ORG/NEW_REPO (lowercase).
+  - Do not put secrets in that commit.
+Merge only when "Test and package" passed.
+
+STEP D — RULESETS ON THE NEW PRIVATE REPO (TEAM)
+Create these with gh api. Do not invent extra rules.
+
+1) Branch ruleset named "protect main" (same as today)
+   target: branch, enforcement: active
+   include: refs/heads/main
+   rules:
+     deletion
+     non_fast_forward
+     required_status_checks:
+       strict_required_status_checks_policy: false
+       required_status_checks: context "Test and package"
+       After the first CI run, set integration_id to the GitHub Actions app
+       if the UI/API offers it (old repo used 15368).
+     pull_request:
+       required_approving_review_count: 0
+       allowed_merge_methods: merge, squash, rebase
+   bypass_actors: empty unless the owner explicitly wants an escape hatch.
+
+2) Push ruleset (this is why Team + private)
+   enforcement: active
+   Restrict file paths: **/* and *
+   Allowed exceptions (ordinary pushes may only touch these):
+     src/main/java/**
+     mql5/Experts/**
+     mql5/Include/**
+   Everything else is denied, including:
+     src/test/java/**
+     mql5/Scripts/Tests/**
+     .github/**
+     deploy/**
+     README.md
+     desk/**
+   If the Team UI uses "Restrict file paths" + "Allow specified paths" or
+   "exceptions", that is the same idea: deny all, except the lists above.
+   Bypass: empty, or the org owner only if the owner asks so they can still
+   change workflows in an emergency.
+
+Verify:
+  A throwaway branch that edits only src/main/java should be pushable.
+  A throwaway branch that edits src/test/java or .github/workflows must be
+  rejected by GitHub. Delete the throwaway branches.
+
+STEP E — VPS RUNTIME (WINDOWS + MT5, TYPICAL)
+Install if missing: Java 17+, Maven 3.9+, git, gh, this repo clone via SSH.
+Do not commit the clone's .env.
+Create .env on disk from .env.example / deploy/app.env.example values.
+AUTH_SHARED and LICHESS_TOKEN come from the owner, never from chat logs.
+RECEIVER_DAILY_PROFIT_TARGET_PCT=6.0 unless they say otherwise.
+RECEIVER_REQUIRE_ALL_AT_BE=true.
+Start the jar listening on 127.0.0.1:5001 (or the port Receiver BaseURL uses).
+  $env:HOST="127.0.0.1"
+  $env:PORT="5001"
+  java -jar target/server-java-*.jar
+  after mvn -B package, or run from an IDE. Firewall: do not expose the
+  process to the world unless the owner wants the home Sender to reach it.
+  If Sender runs at home, they need one open port for the Java API only,
+  not RDP. RDP is the weekend lock.
+
+Copy Receiver + includes into the VPS terminal MQL5 folder and compile with
+MetaEditor as above. Owner attaches Receiver to the chart once, AutoTrading
+on, WebRequest URL allowed.
+Optional later: a scheduled script git pull && copy && MetaEditor /compile
+only after a successful merge to main. Never auto-deploy a branch that
+failed Test and package.
+
+STEP F — WEEKEND KEEPER ON THE VPS ONLY
+If the owner is ready (dedicated Gmail, hours chosen):
+  Copy desk/desk.env.example → desk/desk.env
+  Same TIMEZONE, OPEN_*, CLOSE_* as the home PC will use.
+  VPS: py -3 -m desk.keeper install   (elevated)
+  Home (not this VPS): py -3 -m desk.link install then seal
+  Seal path default %LOCALAPPDATA%\WeekendDesk\seal.json
+If they are not ready, skip desk install. Do not half-configure Gmail.
+
+STEP G — HOME SENDER
+Not on the VPS. Sender.mq5 stays on the home terminal. ServerURL must be the
+VPS Java URL. That is owner work plus a compile of Sender after panel
+changes. Do not require it for "VPS repo setup done".
+
+SUCCESS CHECKLIST
+[ ] gh and ssh identify the NEW GitHub user
+[ ] ORG/REPO is private on Team
+[ ] main exists, CI ran, job name is still "Test and package"
+[ ] GHCR image name uses the new org (if they publish)
+[ ] protect main is active and matches the old rules
+[ ] push ruleset denies tests and .github, allows src/main/java
+[ ] A probe push that edits a test file is rejected
+[ ] No secrets in git
+[ ] Java process answers GET /health on the VPS
+[ ] Live Receiver compiled 0 errors into the data-folder .ex5
+[ ] Receiver posts /receiver-state (Experts log) when attached
+[ ] Keeper not installed on a home PC; link not installed on the VPS
+
+IF SOMETHING BLOCKS YOU
+Ask the owner. Do not weaken rulesets, do not commit secrets, do not attach
+EAs from code. Write what you did in the chat so the next session can
+continue from the checklist, not from scratch.
