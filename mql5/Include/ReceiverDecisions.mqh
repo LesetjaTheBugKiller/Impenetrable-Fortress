@@ -54,6 +54,37 @@ bool ReceiverMarkDealOnce(ulong &processed_tickets[], const ulong deal_ticket)
    return true;
 }
 
+// One close can show up as two deal tickets. The key is the position, the close
+// time, and the net to the cent, so a second copy is not another loss or spike.
+ulong ReceiverCloseKey(const ulong position_id, const long close_time, const double net)
+{
+   if(position_id == 0 || close_time <= 0)
+      return 0;
+   long cents = (long)MathRound(net * 100.0);
+   ulong key = position_id * 1315423911;
+   key ^= (ulong)close_time;
+   key ^= (ulong)cents * 2654435761;
+   return key == 0 ? 1 : key;
+}
+
+bool ReceiverRememberClose(ulong &processed_tickets[], ulong &close_keys[], const ulong deal_ticket, const ulong close_key)
+{
+   if(!ReceiverMarkDealOnce(processed_tickets, deal_ticket))
+      return false;
+   if(close_key == 0)
+      return true;
+
+   for(int index = 0; index < ArraySize(close_keys); index++)
+      if(close_keys[index] == close_key)
+         return false;
+
+   int count = ArraySize(close_keys);
+   if(ArrayResize(close_keys, count + 1) != count + 1)
+      return false;
+   close_keys[count] = close_key;
+   return true;
+}
+
 bool ReceiverApplyClosedDeal(
    ReceiverDailyState &state,
    const bool belongs_to_receiver,
