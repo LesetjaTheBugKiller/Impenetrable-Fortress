@@ -83,6 +83,25 @@ double SpikeThresholdMoney()
    return g_equityAtDayStart * SpikeThresholdPct / 100.0;
 }
 
+// A flat close that is negative only by commission is not a loss. 0.05% of the
+// day-start balance is below a real stop-out and above a typical scratch.
+double LossCountTolerance()
+{
+   if(g_equityAtDayStart <= 0.0)
+      return 0.01;
+   double floor = g_equityAtDayStart * 0.0005;
+   return floor < 0.01 ? 0.01 : floor;
+}
+
+ulong g_processedCloseKeys[];
+
+bool RememberThisClose(const ulong deal, const long closeTime, const double net)
+{
+   ulong positionId = (ulong)HistoryDealGetInteger(deal, DEAL_POSITION_ID);
+   ulong key = ReceiverCloseKey(positionId, closeTime, net);
+   return ReceiverRememberClose(g_processedDeals, g_processedCloseKeys, deal, key);
+}
+
 bool ReadOurClosingNet(const ulong deal, double &net, long &closeTime)
 {
    net = 0.0;
@@ -110,7 +129,7 @@ void ApplyReceiverDealToRuntime(const double net, const long closeTime, bool &wa
 {
    ReceiverDailyState state;
    CopyDailyState(state);
-   if(!ReceiverApplyClosedDeal(state, true, true, true, net, SpikeThresholdMoney(), closeTime, 1e-6, wasLoss, wasSpike))
+   if(!ReceiverApplyClosedDeal(state, true, true, true, net, SpikeThresholdMoney(), closeTime, LossCountTolerance(), wasLoss, wasSpike))
       return;
    StoreDailyState(state);
    if(announce)
@@ -154,6 +173,7 @@ void RebuildDailyFactsFromHistory()
    g_spikesToday = 0;
    g_lastLossClose = 0;
    ArrayResize(g_processedDeals, 0);
+   ArrayResize(g_processedCloseKeys, 0);
 
    for(int index = 0; index < total; index++)
    {
@@ -161,7 +181,7 @@ void RebuildDailyFactsFromHistory()
       double net = 0.0;
       long closeTime = 0;
       if(!ReadOurClosingNet(deal, net, closeTime)) continue;
-      if(!ReceiverMarkDealOnce(g_processedDeals, deal)) continue;
+      if(!RememberThisClose(deal, closeTime, net)) continue;
 
       bool wasLoss = false;
       bool wasSpike = false;
@@ -271,7 +291,7 @@ void OnTradeTransaction(const MqlTradeTransaction &transaction,
    double net = 0.0;
    long closeTime = 0;
    if(!ReadOurClosingNet(transaction.deal, net, closeTime)) return;
-   if(!ReceiverMarkDealOnce(g_processedDeals, transaction.deal)) return;
+   if(!RememberThisClose(transaction.deal, closeTime, net)) return;
    if(closeTime <= 0) closeTime = (long)TimeTradeServer();
 
    bool wasLoss = false;
@@ -292,7 +312,7 @@ void PollHistoryForNewCloses()
       double net = 0.0;
       long closeTime = 0;
       if(!ReadOurClosingNet(deal, net, closeTime)) continue;
-      if(!ReceiverMarkDealOnce(g_processedDeals, deal)) continue;
+      if(!RememberThisClose(deal, closeTime, net)) continue;
       if(closeTime <= 0) closeTime = (long)TimeTradeServer();
 
       bool wasLoss = false;

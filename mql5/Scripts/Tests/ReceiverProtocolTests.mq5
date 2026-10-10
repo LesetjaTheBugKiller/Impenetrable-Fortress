@@ -115,6 +115,21 @@ void TestLossDealAccountingAndDeduplication()
    AssertTrue(daily.losses == 5, "five out-of-order closing losses are counted");
    AssertTrue(!ReceiverMarkDealOnce(processed_tickets, 102), "duplicate closing deal notification is ignored");
 
+   ulong close_keys[];
+   ulong first_copy[];
+   ulong second_copy[];
+   ulong close_key = ReceiverCloseKey(9001, 1000, -25.0);
+   AssertTrue(ReceiverRememberClose(first_copy, close_keys, 201, close_key), "first copy of a close is accepted");
+   AssertTrue(!ReceiverRememberClose(second_copy, close_keys, 202, close_key), "second ticket for the same close is rejected");
+   int lossesBeforeScratch = daily.losses;
+   int spikesBeforeScratch = daily.spikes;
+   ReceiverApplyClosedDeal(daily, true, true, true, -0.40, 1000.0, 110, 2.0, wasLoss, wasSpike);
+   AssertTrue(daily.losses == lossesBeforeScratch && daily.spikes == spikesBeforeScratch,
+              "a scratch inside the loss tolerance is not a loss or a spike");
+   ReceiverApplyClosedDeal(daily, true, true, true, -25.0, 5.0, 111, 2.0, wasLoss, wasSpike);
+   AssertTrue(daily.losses == lossesBeforeScratch + 1 && daily.spikes == spikesBeforeScratch + 1,
+              "a real loss at or beyond the spike size counts once as both");
+
    int lossesBeforeIgnored = daily.losses;
    ReceiverApplyClosedDeal(daily, false, true, true, -50.0, 1000.0, 106, 1e-6, wasLoss, wasSpike);
    ReceiverApplyClosedDeal(daily, true, false, true, -50.0, 1000.0, 107, 1e-6, wasLoss, wasSpike);
