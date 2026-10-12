@@ -63,7 +63,9 @@ class MissingSealTests(unittest.TestCase):
 
     def test_the_reseal_command_exits_with_that_failure(self):
         with tempfile.TemporaryDirectory() as folder:
-            folder = Path(folder)
+            # resolve(): load_config resolves SEAL_PATH, which expands 8.3 short names
+            # (GitHub's runner TEMP is C:\Users\RUNNER~1\...); compare like with like.
+            folder = Path(folder).resolve()
             missing = folder / "seal.json"
             binary = folder / "tle.exe"
             binary.write_bytes(b"")
