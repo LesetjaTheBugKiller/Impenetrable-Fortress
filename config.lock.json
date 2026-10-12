@@ -52,7 +52,7 @@
     "risk:mql5/Include/ReceiverPositionManagement.mqh#MaintainPositions": "8b9e730a27665c7643dc965bd9fdcd79df4196c236d3b92648738ca924bb7c96",
     "risk:mql5/Include/ReceiverPositionManagement.mqh#NukeForeignsByMagic": "0b20bebe2f88aa2d21fc14fd8aa6f967b3cd37a63685255756073e991855212b",
     "risk:mql5/Include/ReceiverProtocol.mqh#ReceiverSignalExpired": "569439d2cfbe709db9540941e7978f4f89b1b14bc36224c52345a3eb1466dd1c",
-    "tree:desk/tests": "9ff9e89f885c26ba37ac4f17c77cec3dc976f8b9276e4afd616c2899a766aab6",
+    "tree:desk/tests": "956334293bd672936aed45bba592e39ff55e5b6e00300a7165b2656f86cdc70b",
     "tree:mql5/Scripts/Tests": "8968bbf4d8cb99c6f4d2e9f4b8e4e596bdd2cda79b29cf057abb4d95b88f6a7b",
     "tree:src/test": "f96e30807c06a49eacc1f0a35aaaa346d58f50ed6f3ed2c93a6b2a6b87a40b4e",
     "whole:mql5/Include/ReceiverDailyState.mqh": "ae3f08a7b98b75699f9298d7198023bc6085776f62cd1f659cb9d6719ae23f0d",
