@@ -59,11 +59,15 @@ rem  Never run `git push --tags`: it would publish every local deploy tag.
 rem  Never copies or reads: config includes (ReceiverConfig.mqh, SenderConfig.mqh,
 rem  ReceiverLimits.mqh), desk\, desk\desk.env, desk\bin\, *.set, presets, app.env, .env.
 rem
-rem  Guard: tools\config_guard.py (committed). Its SHA-256 must match the pin in
+rem  Guard: tools\config_guard.py (committed). The pin is the SHA-256 of that
+rem  committed blob. core.autocrlf rewrites a Windows checkout to CRLF, which
+rem  changes a working-tree hash and is not a guard change. The clean-tree check
+rem  still refuses a real edit. The blob hash must match the pin in
 rem  %MARKER_DIR%\guard.sha256 (outside the repo). GUARD_SHA256 below is a second copy:
 rem  if it differs from the pin file, the script refuses. Lesetja reviews the guard and
-rem  writes the pin file himself (never automatic):
-rem      certutil -hashfile tools\config_guard.py SHA256
+rem  writes the pin file himself (never automatic), from the committed blob:
+rem      git cat-file blob HEAD:tools/config_guard.py
+rem      certutil -hashfile of that blob, SHA256
 rem  Only the fast-forward pull happens before this check; backup, tag, copy and
 rem  compile all come after it.
 rem
@@ -570,8 +574,10 @@ exit /b 1
 git ls-files --error-unmatch "tools/config_guard.py" >nul 2>&1 || (echo REFUSED: tools\config_guard.py is not committed. & exit /b 1)
 git ls-files --error-unmatch "config.lock.json" >nul 2>&1 || (echo REFUSED: config.lock.json is not committed. & exit /b 1)
 if not exist "%PIN_FILE%" (
-  echo REFUSED: no guard pin file. After reviewing the guard, Lesetja creates it himself:
-  echo     certutil -hashfile "%GUARD%" SHA256
+  echo REFUSED: no guard pin file. After reviewing the guard, Lesetja creates it himself
+  echo from the committed blob, not the working-tree file:
+  echo     git cat-file blob HEAD:tools/config_guard.py
+  echo     certutil -hashfile of that blob, SHA256
   echo and saves the 64 hex characters as the only line of %PIN_FILE%
   exit /b 1
 )
@@ -585,9 +591,21 @@ if /i not "%GUARD_SHA256%"=="PASTE-REVIEWED-SHA256-HERE" if /i not "%GUARD_SHA25
   echo  Review the guard change, then write the pin file yourself ^(ASCII, no BOM^). Nothing deployed.
   exit /b 1
 )
-set "IF_FILE=%GUARD%"
+set "IF_BLOB=%TEMP%\if-guard-blob.py"
+if exist "!IF_BLOB!" del /q "!IF_BLOB!"
+git cat-file blob "HEAD:tools/config_guard.py" > "!IF_BLOB!"
+if errorlevel 1 (
+  echo REFUSED: could not read the committed tools\config_guard.py.
+  exit /b 1
+)
+set "IF_FILE=!IF_BLOB!"
 set "GH="
 for /f %%h in ('powershell -NoProfile -Command "(Get-FileHash -LiteralPath $env:IF_FILE -Algorithm SHA256).Hash.ToLower()"') do set "GH=%%h"
+del /q "!IF_BLOB!" >nul 2>&1
+if not defined GH (
+  echo REFUSED: could not hash the committed tools\config_guard.py.
+  exit /b 1
+)
 if /i not "!GH!"=="!PIN!" (
   echo REFUSED: tools\config_guard.py does not match the pinned SHA-256. Review the guard change.
   exit /b 1
