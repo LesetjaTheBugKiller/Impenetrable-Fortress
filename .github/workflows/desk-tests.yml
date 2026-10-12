@@ -117,6 +117,35 @@ jobs:
           $kept = @($lines | Where-Object { $_ -notmatch $pattern })
           $kept
           Write-Output ("[{0} line(s) hidden by the sensitive-word filter]" -f ($lines.Count - $kept.Count))
+      # Names failing desk-python tests WITHOUT printing messages, diffs or values (allowlist).
+      # Note: subTest failures print a header with a ' (param=...)' or '[msg]' suffix that the
+      # anchored regex won't match; such a failure shows only in 'FAILED (failures=N)'. Rerun locally to name it.
+      - name: Print failing desk-python test names (allowlist, no messages)
+        if: failure()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $log = 'desk/test_output/desk-python.txt'
+          if (-not (Test-Path $log)) { Write-Output "$log was not written."; exit 0 }
+          $lines = @(Get-Content $log)
+          $out = New-Object System.Collections.Generic.List[string]
+          $inBlock = $false; $last = $null
+          foreach ($l in $lines) {
+            if ($l -match '^(FAIL|ERROR): \S+ \([\w.]+\)$') {
+              if ($inBlock -and $last) { $out.Add('  exception: ' + $last) }
+              $out.Add($l); $inBlock = $true; $last = $null; continue
+            }
+            # Block end: PowerShell evaluates -or/-and left to right, so this is ((=== or ---) and $last).
+            # The '---' right after a header has $last = null and keeps the block open; the next '===' or
+            # the final '---' (after an exception line was seen) closes it.
+            if ($inBlock -and ($l -match '^={10,}$' -or $l -match '^-{10,}$' -and $last)) { if ($last) { $out.Add('  exception: ' + $last) }; $inBlock = $false; $last = $null; continue }
+            # Capture group 1 is the exception class name only; text after ':' is never printed.
+            if ($inBlock -and $l -match '^([A-Za-z_][\w.]*(Error|Exception|Failure|Warning|Interrupt|Exit))(:|$)') { $last = $Matches[1] }
+            if ($l -match '^Ran \d+ tests? in ' -or $l -match '^(FAILED|OK)\b') { $out.Add($l) }
+          }
+          if ($inBlock -and $last) { $out.Add('  exception: ' + $last) }
+          $out
+          exit 0
 
   config-integrity:
     name: Config integrity
