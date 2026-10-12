@@ -15,6 +15,7 @@ void PersistTradingDay()
    GlobalVariableSet(prefix + "day", (double)g_dayAnchor);
    GlobalVariableSet(prefix + "start", g_equityAtDayStart);
    GlobalVariableSet(prefix + "login", (double)AccountInfoInteger(ACCOUNT_LOGIN));
+   GlobalVariablesFlush();
 }
 
 void LoadPersistedDay()
@@ -142,12 +143,15 @@ void ApplyReceiverDealToRuntime(const double net, const long closeTime, bool &wa
 
 void RebuildDailyFactsFromHistory()
 {
-   if(g_equityAtDayStart <= 0.0)
-      g_equityAtDayStart = AccountInfoDouble(ACCOUNT_BALANCE);
-
+   // With no saved day-start, derive it below as balance minus today's closed
+   // net. Setting it to the current balance here would hide today's losses.
    datetime from = g_dayAnchor > 0 ? g_dayAnchor : DayAnchor(TimeTradeServer());
    if(!HistorySelect(from, TimeTradeServer()))
+   {
+      if(g_equityAtDayStart <= 0.0)
+         g_equityAtDayStart = AccountInfoDouble(ACCOUNT_BALANCE);
       return;
+   }
 
    int total = HistoryDealsTotal();
    if(g_equityAtDayStart <= 0.0)
@@ -198,7 +202,13 @@ void RefreshTradingDay(const bool rebuildFacts)
    long previousAnchor = state.day_anchor;
    bool reset = ReceiverApplyDailyReset(state, (long)anchor, AccountInfoDouble(ACCOUNT_BALANCE));
    if(reset)
+   {
       StoreDailyState(state);
+      // First load with no saved day: the current balance already includes
+      // today's closed trades, so clear it and let the rebuild derive it.
+      if(previousAnchor == 0)
+         g_equityAtDayStart = 0.0;
+   }
 
    if(rebuildFacts || g_equityAtDayStart <= 0.0)
       RebuildDailyFactsFromHistory();
@@ -255,6 +265,8 @@ void FlushPendingRiskClears()
       string json = StringFormat("{\"symbol\":\"%s\",\"side\":\"%s\",\"closed\":true}", symbol, side);
       if(PostTradeRiskQuiet(json))
          ArrayRemove(g_pendingRiskClears, index, 1);
+      else
+         break; // Server is not answering; retry next cycle instead of blocking on every entry.
    }
 }
 

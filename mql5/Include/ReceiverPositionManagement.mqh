@@ -33,6 +33,9 @@ void RememberVirtualStop(const ulong ticket, const long type, const double stop,
    GlobalVariableSet(VirtualStopKey(ticket), stop);
    if(riskPoints > 0.0)
       GlobalVariableSet(VirtualRiskKey(ticket), riskPoints);
+   // Write to disk now; MT5 otherwise saves globals only on a clean shutdown,
+   // so a crash would lose the silent stop.
+   GlobalVariablesFlush();
 }
 
 double VirtualStopPrice(const ulong ticket)
@@ -86,6 +89,7 @@ void ForgetVirtualStop(const ulong ticket)
    RememberClosedTicket(ticket);
    GlobalVariableDel(VirtualStopKey(ticket));
    GlobalVariableDel(VirtualRiskKey(ticket));
+   GlobalVariablesFlush();
    int index = IndexOfTicket(ticket);
    if(index < 0)
       return;
@@ -167,6 +171,7 @@ bool CloseIfWidened(const string symbol, const ulong ticket, const long type, co
 
 void NukeForeignsByMagic()
 {
+   if(!CloseForeignPositions) return;
    for(int index = PositionsTotal() - 1; index >= 0; index--)
    {
       ulong ticket = PositionGetTicket(index);
@@ -258,10 +263,28 @@ void MaintainPositions()
       {
          double tolerance = 0.5 * GetSymbolPoint(symbol);
          bool isBuy = type == POSITION_TYPE_BUY;
+
+         // Re-seat a missing broker backstop. Use the original risk distance,
+         // because after break-even the silent stop sits on the entry price.
+         if(PositionGetDouble(POSITION_SL) <= 0.0)
+         {
+            double originalRisk = VirtualRiskPoints(ticket);
+            double basis = originalRisk > 0.0
+               ? entry + (isBuy ? -1.0 : 1.0) * originalRisk * GetSymbolPoint(symbol)
+               : virtualStop;
+            if(MathAbs(entry - basis) > tolerance)
+               EnsureBackstop(symbol, ticket, type, entry, basis, false);
+            PositionSelectByTicket(ticket);
+         }
          MqlTick tick;
          if(!SymbolInfoTick(symbol, tick))
          {
-            PrintFormat("[RX] No tick for silent stop on %s", symbol);
+            static datetime lastNoTickWarning = 0;
+            if(TimeCurrent() - lastNoTickWarning >= 30)
+            {
+               PrintFormat("[RX] No tick for silent stop on %s", symbol);
+               lastNoTickWarning = TimeCurrent();
+            }
             continue;
          }
          if(VirtualStopReached(type, virtualStop, tick.bid, tick.ask))
@@ -285,7 +308,10 @@ void MaintainPositions()
             if(riskPoints <= 0.0 && point > 0.0)
                riskPoints = MathAbs(entry - virtualStop) / point;
             double current = type == POSITION_TYPE_BUY ? tick.bid : tick.ask;
-            double movePoints = point > 0.0 ? MathAbs(current - entry) / point : 0.0;
+            // Only a move in the trade's favour counts toward break-even.
+            double movePoints = point > 0.0
+               ? (type == POSITION_TYPE_BUY ? current - entry : entry - current) / point
+               : 0.0;
             if(riskPoints > 0.0 && movePoints >= AutoBE_Multiplier * riskPoints - 0.5)
             {
                if(!ReceiverPositionAtBreakEven(isBuy, entry, virtualStop, tolerance))
@@ -326,7 +352,7 @@ void MaintainPositions()
          continue;
       }
       double current = type == POSITION_TYPE_BUY ? tick.bid : tick.ask;
-      double movePoints = MathAbs(current - entry) / point;
+      double movePoints = (type == POSITION_TYPE_BUY ? current - entry : entry - current) / point;
       if(movePoints >= AutoBE_Multiplier * riskPoints - 0.5)
       {
          double desiredStop = entry;

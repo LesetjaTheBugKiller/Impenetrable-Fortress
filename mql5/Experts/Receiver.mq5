@@ -20,9 +20,9 @@ enum ENUM_INSTR_TYPE {
    INSTR_TYPE_OTHER
 };
 
-input string AUTH_SHARED = "FlokiPAY"; // Must match AUTH_SHARED on the server
+input string AUTH_SHARED = ""; // Must match AUTH_SHARED on the server. No default: set it in the EA inputs.
 input string BaseURL = "http://127.0.0.1:5001"; // Same base URL as the sender, including the port
-input int TimeoutMs = 8000;
+input int TimeoutMs = 2000; // Short so a slow server cannot stall the silent-stop checks
 input int PollMs = 300;
 input int ReceiverStatePublishMs = 1000;
 input long Magic = 20258008;
@@ -45,8 +45,13 @@ input double AutoBE_Multiplier = 3.0;
 input double RiskPerTradePct = 1.0;
 input double TakeProfitReward = 4.0; // 4 closes at four times the stop distance
 input double MaxLotsCap = 100.0;
-input bool EnableMinStopDistance = false;
+input bool EnableMinStopDistance = true;
 input double MinStopDistancePoints = 10.0;
+input double MinStopSpreadMultiple = 3.0; // Silent stop is never closer than this many current spreads
+input double AtrScaleMinRatio = 0.5; // ATR can shrink the stop to at most half the configured distance
+input double AtrScaleMaxRatio = 2.0; // ATR can widen the stop to at most twice the configured distance
+input double BackstopStopMultiple = 3.0; // Broker-side backstop sits this many silent-stop distances from entry (never below 1)
+input bool CloseForeignPositions = true; // Close positions and orders that do not carry this Magic
 
 input bool EmergencyStop = false;
 input bool EnableSelfHealing = true;
@@ -105,6 +110,7 @@ int gAtrHandles[];
 datetime g_lastNoticeTime = 0;
 string g_lastNoticeText = "";
 int g_logFileHandle = INVALID_HANDLE;
+string g_logFileDate = "";
 
 bool IsFiniteNumber(const double value)
 {
@@ -135,10 +141,16 @@ bool ParseHHMM(const string hhmm, int &hour, int &minute)
 void LogToFile(const string message)
 {
    if(!EnableDetailedLogging) return;
+   string today = TimeToString(TimeCurrent(), TIME_DATE);
+   if(g_logFileHandle != INVALID_HANDLE && today != g_logFileDate)
+   {
+      FileClose(g_logFileHandle);
+      g_logFileHandle = INVALID_HANDLE;
+   }
    if(g_logFileHandle == INVALID_HANDLE)
    {
-      string filename = "SignalReceiverEA_" + IntegerToString(Magic) + "_" +
-                        TimeToString(TimeCurrent(), TIME_DATE) + ".log";
+      g_logFileDate = today;
+      string filename = "SignalReceiverEA_" + IntegerToString(Magic) + "_" + today + ".log";
       g_logFileHandle = FileOpen(filename, FILE_WRITE | FILE_READ | FILE_TXT | FILE_SHARE_READ);
    }
    if(g_logFileHandle == INVALID_HANDLE) return;
@@ -311,10 +323,17 @@ double ResolveStopPoints(const string symbol, const bool wait_for_atr)
    double normal = GetSafeStopPoints(symbol);
    double current = ReadAtr(symbol, AtrPeriod, wait_for_atr);
    double baseline = ReadAtr(symbol, AtrBaselinePeriod, wait_for_atr);
+   double minimumPoints = MinStopDistancePoints;
+   double spreadPoints = (double)SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+   if(MinStopSpreadMultiple > 0.0 && spreadPoints * MinStopSpreadMultiple > minimumPoints)
+      minimumPoints = spreadPoints * MinStopSpreadMultiple;
+   double stopsLevel = (double)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   if(stopsLevel > minimumPoints)
+      minimumPoints = stopsLevel;
    double scaled = ReceiverApplyMinimumStopPoints(
-      ReceiverScaleStopPoints(normal, current, baseline),
+      ReceiverScaleStopPoints(normal, current, baseline, AtrScaleMinRatio, AtrScaleMaxRatio),
       EnableMinStopDistance,
-      MinStopDistancePoints);
+      minimumPoints);
 
    if(wait_for_atr)
    {
@@ -539,17 +558,31 @@ void CheckEmergencyStop()
    if(!EmergencyStop) return;
    Print("[RX] Emergency stop");
    LogToFile("[EMERGENCY STOP]");
+   int remaining = 0;
    for(int index = PositionsTotal() - 1; index >= 0; index--)
    {
       ulong ticket = PositionGetTicket(index);
       if(PositionSelectByTicket(ticket) && PositionGetInteger(POSITION_MAGIC) == Magic)
-         Trade.PositionClose(ticket);
+      {
+         if(Trade.PositionClose(ticket))
+            ForgetVirtualStop(ticket);
+         else
+            remaining++;
+      }
    }
    for(int index = OrdersTotal() - 1; index >= 0; index--)
    {
       ulong ticket = OrderGetTicket(index);
-      if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == Magic)
-         Trade.OrderDelete(ticket);
+      if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == Magic && !Trade.OrderDelete(ticket))
+         remaining++;
+   }
+   // Stay attached until everything is closed, so silent stops keep running
+   // on anything the broker refused to close.
+   if(remaining > 0)
+   {
+      SendNoticeOnce(StringFormat("Emergency stop: %d positions or orders could not be closed yet, retrying", remaining), 60);
+      MaintainPositions();
+      return;
    }
    ExpertRemove();
 }
@@ -608,6 +641,11 @@ bool PublishReceiverState()
 
 int OnInit()
 {
+   if(StringLen(AUTH_SHARED) == 0)
+   {
+      Print("[RX] AUTH_SHARED is empty. Set it in the EA inputs to the server's shared secret.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
    g_effRiskPerTradePct = RiskPerTradePct;
    if(g_effRiskPerTradePct <= 0.0 || g_effRiskPerTradePct > 10.0)
    {
@@ -621,6 +659,7 @@ int OnInit()
    InitializeMarketWatch();
    WarmAtrHandles();
    RestoreVirtualStops();
+   LoadLastSignalId();
    LoadPersistedDay();
    RefreshTradingDay(true);
    PublishReceiverState();
@@ -675,5 +714,7 @@ void OnTimer()
          return;
       g_publishStateNow = false;
    }
+   // Network calls above can take seconds; check silent stops again before a new trade.
+   MaintainPositions();
    ProcessPendingServerSignal();
 }

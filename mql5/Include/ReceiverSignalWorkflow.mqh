@@ -3,6 +3,37 @@
 
 // Polls /next and executes a signal the server has already released.
 
+// The last executed signal ID is kept in a file so a restart between a fill
+// and a successful /ack cannot execute the same signal twice.
+string LastSignalFileName()
+{
+   return "RX_" + IntegerToString(Magic) + "_last_signal.txt";
+}
+
+void LoadLastSignalId()
+{
+   int handle = FileOpen(LastSignalFileName(), FILE_READ | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE) return;
+   string stored = FileReadString(handle);
+   FileClose(handle);
+   StringTrimLeft(stored);
+   StringTrimRight(stored);
+   if(stored != "") g_lastAckedSignalID = stored;
+}
+
+void SaveLastSignalId(const string id)
+{
+   g_lastAckedSignalID = id;
+   int handle = FileOpen(LastSignalFileName(), FILE_WRITE | FILE_TXT | FILE_ANSI);
+   if(handle == INVALID_HANDLE)
+   {
+      Print("[RX] Could not save the last signal ID");
+      return;
+   }
+   FileWriteString(handle, id);
+   FileClose(handle);
+}
+
 bool AcknowledgePendingSignal(const string headers)
 {
    string responseBody, responseHeaders;
@@ -72,6 +103,8 @@ void ProcessPendingServerSignal()
    }
 
    PrintFormat("[RX] %s %s lots=%.6f entry=%.5f silent sl=%.5f", side, symbol, lots, entryPrice, stopLossPrice);
+   // Record the ID before sending the order, so a crash mid-trade cannot repeat it.
+   if(signal.id != "") SaveLastSignalId(signal.id);
    if(!SafeTradeExecute(symbol, side, lots, stopLossPrice, entryPrice))
    {
       PrintFormat("[RX] Trade failed: ret=%d (%s)", Trade.ResultRetcode(), Trade.ResultRetcodeDescription());
@@ -80,7 +113,6 @@ void ProcessPendingServerSignal()
    }
 
    LogToFile("[TRADE_EXECUTED] " + side + " " + symbol + " Lots:" + DoubleToString(lots, 6));
-   if(signal.id != "") g_lastAckedSignalID = signal.id;
    g_publishStateNow = true;
    PublishReceiverState();
 

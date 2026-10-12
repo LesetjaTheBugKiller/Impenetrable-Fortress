@@ -305,6 +305,39 @@ void TestDailyResetTransitions()
               "new day clears daily counters");
 }
 
+void TestStopScaleClampAndBackstop()
+{
+   AssertTrue(MathAbs(ReceiverScaleStopPoints(100.0, 1.0, 5.0) - 50.0) < 1e-8,
+              "a very quiet minute cannot shrink the stop below the lower ratio bound");
+   AssertTrue(MathAbs(ReceiverScaleStopPoints(100.0, 50.0, 5.0) - 200.0) < 1e-8,
+              "a wild minute cannot stretch the stop past the upper ratio bound");
+   AssertTrue(MathAbs(ReceiverScaleStopPoints(100.0, 6.0, 5.0, 0.8, 1.1) - 110.0) < 1e-8,
+              "custom ratio bounds are respected");
+
+   double backstop = 0.0;
+   AssertTrue(ReceiverBackstopStopPrice(true, 1.1000, 1.0950, 2.0, backstop) && MathAbs(backstop - 1.0900) < 1e-8,
+              "buy backstop sits below the silent stop");
+   AssertTrue(ReceiverBackstopStopPrice(false, 1.1000, 1.1050, 2.0, backstop) && MathAbs(backstop - 1.1100) < 1e-8,
+              "sell backstop sits above the silent stop");
+   AssertTrue(ReceiverBackstopStopPrice(true, 1.1000, 1.0950, 0.5, backstop) && MathAbs(backstop - 1.0950) < 1e-8,
+              "backstop is never tighter than the silent stop");
+   AssertTrue(!ReceiverBackstopStopPrice(true, 1.1000, 0.0, 2.0, backstop), "no silent stop means no backstop");
+}
+
+void TestTopLevelJsonOnly()
+{
+   ReceiverSignal signal;
+   string nested = "{\"meta\":{\"ok\":true,\"side\":\"BUY\"},\"ok\":false}";
+   AssertTrue(!ReceiverJsonTrue(nested, "ok"), "a nested ok does not override the top-level ok");
+   string inValue = "{\"reason\":\"\\\"ok\\\":true\",\"ok\":false}";
+   AssertTrue(!ReceiverJsonTrue(inValue, "ok"), "text inside a string value is not read as a key");
+   AssertTrue(ReceiverJsonTrue("{\"note\":\"x\",\"ok\":true}", "ok"), "top-level ok after another key is found");
+
+   signal.timestamp = 1010;
+   long age = 0;
+   AssertTrue(ReceiverSignalExpired(signal, 1000, 5, age), "a signal from the future is rejected as clock skew");
+}
+
 void OnStart()
 {
    TestParsesSignalAndBuildsFallbackId();
@@ -318,6 +351,8 @@ void OnStart()
    TestSilentStopGates();
    TestLotRiskAndMarginPlanning();
    TestDailyResetTransitions();
+   TestStopScaleClampAndBackstop();
+   TestTopLevelJsonOnly();
 
    PrintFormat("ReceiverProtocolTests: %d assertions, %d failures", g_assertions, g_failures);
 }

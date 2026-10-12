@@ -178,17 +178,47 @@ double ReceiverReferenceAtr(
 
 // Scale the configured distance by live ATR / calm-market ATR.
 // A missing live or reference reading leaves the configured distance unchanged.
+// The ratio is clamped so a dead-quiet or wild minute cannot shrink the stop
+// toward the spread or stretch it without limit.
 double ReceiverScaleStopPoints(
    const double normal_stop_points,
    const double current_atr,
-   const double reference_atr
+   const double reference_atr,
+   const double min_ratio = 0.5,
+   const double max_ratio = 2.0
 )
 {
    if(normal_stop_points <= 0.0)
       return 0.0;
    if(current_atr <= 0.0 || reference_atr <= 0.0)
       return normal_stop_points;
-   return normal_stop_points * (current_atr / reference_atr);
+   double ratio = current_atr / reference_atr;
+   double low = min_ratio > 0.0 ? min_ratio : 0.5;
+   double high = max_ratio >= low ? max_ratio : low;
+   if(ratio < low) ratio = low;
+   if(ratio > high) ratio = high;
+   return normal_stop_points * ratio;
+}
+
+// Broker-side backstop: a wider stop placed on the ticket so a crash, outage,
+// or blocked timer cannot leave a position with no stop at all.
+bool ReceiverBackstopStopPrice(
+   const bool is_buy,
+   const double entry_price,
+   const double silent_stop_price,
+   const double backstop_multiple,
+   double &backstop_price
+)
+{
+   backstop_price = 0.0;
+   if(entry_price <= 0.0 || silent_stop_price <= 0.0)
+      return false;
+   double distance = MathAbs(entry_price - silent_stop_price);
+   if(distance <= 0.0)
+      return false;
+   double multiple = backstop_multiple >= 1.0 ? backstop_multiple : 1.0;
+   backstop_price = entry_price + (is_buy ? -1.0 : 1.0) * multiple * distance;
+   return backstop_price > 0.0;
 }
 
 // Gates read the hidden stop. A stop placed on the ticket is only a fallback

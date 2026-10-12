@@ -1,4 +1,37 @@
+# gitattributes.proposed - DRAFT v4 (NARROW) for review. Lesetja copies it to .gitattributes himself.
+#
+# Deliberately narrow: NO `* text=auto` and NO rule for *.mq5/*.mqh/*.mq4 or anything under
+# mql5/. Git's own heuristics keep treating MQL5 sources as they are today (a UTF-16 file
+# with NUL bytes is detected as binary and left alone), and nothing is renormalised.
+#
+# Repo state read on the laptop (2026-10-11, `git ls-files --eol`): 89 tracked files,
+# 88 i/lf + 1 i/none (empty desk/tests/__init__.py), 0 i/crlf, 0 i/mixed, 0 -text;
+# no UTF-16 or BOM MQL5 files; no binary-type files tracked. The only .cmd files
+# (desk/keeper.cmd, desk/link.cmd, desk/reseal.cmd) are already i/lf w/crlf, so the
+# CRLF rule below changes no committed content and no working-tree bytes on the laptop.
+# VERIFY after copying: `git add --renormalize . && git status` shows nothing to commit.
+
+# Existing rules, copied unchanged from the current .gitattributes
 deploy/*.sh text eol=lf
 deploy/*.service text eol=lf
 deploy/*.timer text eol=lf
 deploy/*.example text eol=lf
+
+# Windows scripts: CRLF in every checkout, on every OS (cmd.exe misreads labels in LF files;
+# config_guard.py also fails any .cmd/.bat/.ps1 with a bare LF or lone CR)
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Never text: compiled MetaTrader files, presets, media, executables, archives
+*.ex4 binary
+*.ex5 binary
+*.set binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.wav binary
+*.exe binary
+*.dll binary
+*.jar binary

@@ -12,19 +12,39 @@ struct ReceiverSignal
    long timestamp;
 };
 
+// Finds the value of a top-level key only. Text inside string values and keys
+// of nested objects or arrays are skipped, so they cannot be mistaken for
+// "ok", "side", "symbol", and the like.
 int ReceiverFindValueStart(const string json, const string key)
 {
-   string pattern = "\"" + key + "\"";
-   int position = StringFind(json, pattern);
-   if(position < 0) return -1;
-   position += StringLen(pattern);
    int length = StringLen(json);
-
-   while(position < length && StringGetCharacter(json, position) <= 32) position++;
-   if(position >= length || StringGetCharacter(json, position) != ':') return -1;
-   position++;
-   while(position < length && StringGetCharacter(json, position) <= 32) position++;
-   return position < length ? position : -1;
+   int depth = 0;
+   bool inString = false;
+   bool escaped = false;
+   int stringStart = -1;
+   for(int index = 0; index < length; index++)
+   {
+      ushort character = StringGetCharacter(json, index);
+      if(inString)
+      {
+         if(escaped) { escaped = false; continue; }
+         if(character == '\\') { escaped = true; continue; }
+         if(character != '"') continue;
+         inString = false;
+         if(depth != 1) continue;
+         int position = index + 1;
+         while(position < length && StringGetCharacter(json, position) <= 32) position++;
+         if(position >= length || StringGetCharacter(json, position) != ':') continue;
+         if(StringSubstr(json, stringStart, index - stringStart) != key) continue;
+         position++;
+         while(position < length && StringGetCharacter(json, position) <= 32) position++;
+         return position < length ? position : -1;
+      }
+      if(character == '"') { inString = true; stringStart = index + 1; }
+      else if(character == '{' || character == '[') depth++;
+      else if(character == '}' || character == ']') depth--;
+   }
+   return -1;
 }
 
 string ReceiverJsonString(const string json, const string key)
@@ -153,6 +173,9 @@ bool ReceiverSignalExpired(const ReceiverSignal &signal, const long now_utc, con
 {
    age_seconds = signal.timestamp > 0 ? now_utc - signal.timestamp : max_age_seconds + 1;
    if(signal.timestamp <= 0) return true;
+   // A signal from the future means this computer's clock and the server's
+   // disagree; treat it as untrustworthy instead of fresh.
+   if(age_seconds < -2) return true;
    return age_seconds > max_age_seconds;
 }
 
