@@ -32,6 +32,12 @@ jobs:
       - name: Run tests and package
         run: mvn -B verify
 
+      - name: Deploy script tests (Linux-only, fake docker)
+        run: |
+          bash deploy/test-deploy.sh | tee test-deploy.out
+          # zero tests counted is a failure
+          grep -Eq '^passed=[1-9][0-9]* failed=0$' test-deploy.out
+
       - name: Upload jar
         uses: actions/upload-artifact@v4
         with:
