@@ -80,6 +80,11 @@ jobs:
         shell: cmd
         run: py -3 -c "import os,sys; want=tuple(int(x) for x in os.environ['PYTHON_VERSION'].split('.')); assert sys.version_info[:2]==want, sys.version"
 
+      # The runner's Python has no packages; tzdata is needed for zoneinfo on Windows.
+      - name: Install desk Python requirements
+        shell: cmd
+        run: py -3 -m pip install --disable-pip-version-check -r desk\requirements.txt || exit /b 1
+
       - name: Set up Java and Maven cache
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
