@@ -145,7 +145,7 @@ TOOL_FILES = [".gitignore", "tools/config_guard.py", "deploy.cmd",
               "desk/run_all_tests.cmd", "deploy/test-deploy.sh"]
 TEST_TREES = ["desk/tests", "src/test", "mql5/Scripts/Tests", "tests"]  # locked if present
 TREE_IGNORE_DIRS = {"__pycache__", ".pytest_cache"}
-TREE_IGNORE_SUFFIXES = {".pyc", ".pyo"}
+TREE_IGNORE_SUFFIXES = {".pyc", ".pyo", ".ex5", ".ex4"}  # compiled MetaTrader output, never committed
 INPUT_ALLOWED_PREFIXES = ["mql5/scripts/tests/"]  # lower-case
 CRLF_SUFFIXES = {".cmd", ".bat", ".ps1"}
 NEVER_READ = ("desk/bin/", "desk/desk.env")  # SEAL secrets: never opened
