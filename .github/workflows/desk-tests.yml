@@ -1,0 +1,202 @@
+# DRAFT v4.3 for review. Lesetja places this at .github/workflows/desk-tests.yml himself.
+# PREREQUISITE: the fixed .gitattributes (gitattributes.proposed) must land FIRST, so the
+# Windows runner checks files out with the same line endings as the laptop.
+# Lesetja chose these as REQUIRED GitHub checks (in addition to the local gates in deploy.cmd):
+#   "Desk tests"       runs desk\run_all_tests.cmd on Windows.
+#   "Config integrity" runs tools/config_guard.py (repo check only, no --live). It needs
+#                      tools/config_guard.py AND config.lock.json committed; until then it fails.
+#                      If config.lock.json changed (pull request: against the base branch;
+#                      push to main: against github.event.before), at least one commit in
+#                      the range needs a `Config-Change-Reason:` trailer.
+#                      The trailer is an AUDIT MARKER, not a control: anyone who can push can
+#                      type one. What makes it effective is branch protection on main
+#                      (pull request required + this check required), so the lock can only
+#                      change through a PR that shows the diff-names and the reason. On a
+#                      direct push the check runs AFTER the push: it turns main red, it
+#                      cannot block the push.
+#                      Writing the trailer: put `Config-Change-Reason: <why>` as the LAST line
+#                      of the commit message, after a blank line (git's trailer rules). This
+#                      check accepts it on any line of the message's last paragraph, in any
+#                      commit of the range, including a merge commit (on a PR: also the test
+#                      merge commit GitHub builds). Merge PRs with a MERGE COMMIT so the
+#                      original commits and trailers reach main. A squash merge keeps the
+#                      trailer only if the squash message still ends with it (GitHub's default
+#                      squash message lists the commit messages; check before confirming).
+#                      Rebase merges keep it in the rebased commits.
+# Java: run_all_tests.cmd runs `mvn -B test`, so JDK 21 + Maven cache are set up here.
+# That overlaps ci.yml's `mvn -B verify` on Ubuntu; kept on purpose (Windows paths, Git Bash).
+# No artifacts are uploaded; a filtered log tail is printed instead.
+# Every multi-line cmd block ends each command with `|| exit /b 1` (cmd does not stop on errors).
+# Actions are pinned to full commit SHAs (looked up 2026-10-11 from the actions/* tags).
+name: Desk tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desk-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  JAVA_VERSION: "21"
+
+jobs:
+  desk-tests:
+    name: Desk tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CI: "1"
+      # RUN_LIVE_TESTS is deliberately not set: test_tle_live.py stays skipped.
+      # RUN_MT5_TESTS / REQUIRE_MQL5_TESTS are not set: no MetaTrader on the runner, mql5 is SKIPPED.
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Require the pinned Python version (python)
+        shell: cmd
+        run: python -c "import os,sys; want=tuple(int(x) for x in os.environ['PYTHON_VERSION'].split('.')); assert sys.version_info[:2]==want, sys.version"
+
+      # run_all_tests.cmd calls `py -3`; PY_PYTHON3 makes the launcher pick the same version.
+      - name: Point the py launcher at the same Python
+        shell: cmd
+        run: echo PY_PYTHON3=%PYTHON_VERSION%>>"%GITHUB_ENV%"
+
+      - name: Require the pinned Python version (py -3)
+        shell: cmd
+        run: py -3 -c "import os,sys; want=tuple(int(x) for x in os.environ['PYTHON_VERSION'].split('.')); assert sys.version_info[:2]==want, sys.version"
+
+      - name: Set up Java and Maven cache
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Show tool versions
+        shell: cmd
+        run: |
+          python --version || exit /b 1
+          java -version || exit /b 1
+          mvn -v || exit /b 1
+          if exist "%ProgramFiles%\Git\bin\bash.exe" (echo Git Bash found) else (echo Git Bash NOT found & exit /b 1)
+
+      - name: Run all desk tests
+        shell: cmd
+        run: call desk\run_all_tests.cmd --no-pull || exit /b 1
+
+      - name: Print test log tail (sensitive-looking lines filtered)
+        if: always()
+        shell: pwsh
+        run: |
+          $log = 'desk/test_results.log'
+          if (-not (Test-Path $log)) { Write-Output "desk/test_results.log was not written."; exit 0 }
+          $lines = Get-Content $log -Tail 200
+          # Over-matching is intended (e.g. a test named *session* is hidden too); the full log
+          # stays on the runner only and is never uploaded.
+          $pattern = '(?i)token|secret|password|auth|authorization|bearer|cookie|session|private|apikey|api_key|key=|-----BEGIN'
+          $kept = @($lines | Where-Object { $_ -notmatch $pattern })
+          $kept
+          Write-Output ("[{0} line(s) hidden by the sensitive-word filter]" -f ($lines.Count - $kept.Count))
+
+  config-integrity:
+    name: Config integrity
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out (full history, so the base branch and PR commits are present)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Require the pinned Python version
+        shell: cmd
+        run: python -c "import os,sys; want=tuple(int(x) for x in os.environ['PYTHON_VERSION'].split('.')); assert sys.version_info[:2]==want, sys.version"
+
+      - name: Guard and lock are committed
+        shell: cmd
+        run: |
+          if not exist tools\config_guard.py (echo tools/config_guard.py is not committed. & exit /b 1)
+          if not exist config.lock.json (echo config.lock.json is not committed. & exit /b 1)
+
+      - name: Lock change needs a Config-Change-Reason trailer (pull requests and pushes to main)
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT}" = "pull_request" ]; then
+            base="origin/${BASE_REF}"; head="${PR_HEAD_SHA}"; what="base branch ${base}"
+          else
+            base="${PUSH_BEFORE}"; head="${PUSH_AFTER}"; what="the previous main commit ${base}"
+          fi
+          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
+            # New branch (no previous commit): only the pushed commit itself can be checked.
+            base_blob=none; range="-1 ${head}"
+            echo "No previous commit for this push; checking ${head} alone."
+          else
+            git rev-parse --verify --quiet "${base}^{commit}" >/dev/null || { echo "FAIL: ${what} is not in the checkout (force push?)."; exit 1; }
+            base_blob=$(git rev-parse --verify --quiet "${base}:config.lock.json" || echo none)
+            range="${base}..${head}"
+          fi
+          head_blob=$(git rev-parse --verify --quiet "${head}:config.lock.json" || echo none)
+          if [ "${base_blob}" = "${head_blob}" ]; then
+            echo "config.lock.json is unchanged against ${what}."
+            exit 0
+          fi
+          echo "config.lock.json changed against ${what}. Entry names that differ from that lock:"
+          if [ "${base_blob}" != "none" ]; then
+            git show "${base}:config.lock.json" > "${RUNNER_TEMP}/base.lock.json"
+            python -B tools/config_guard.py --diff-names --lock "${RUNNER_TEMP}/base.lock.json" || true
+          else
+            echo "(no earlier config.lock.json to compare with)"
+          fi
+          # Own parser instead of git's %(trailers): the trailer counts on ANY line of the last
+          # paragraph of a commit message (merge commits included).
+          # shellcheck disable=SC2086  # range is "-1 <sha>" or "<a>..<b>" on purpose
+          commits=$(git rev-list ${range})
+          if [ "${EVENT}" = "pull_request" ] && [ -n "${MERGE_SHA}" ] && [ "${MERGE_SHA}" != "${head}" ]; then
+            commits="${commits} ${MERGE_SHA}"   # the PR's merge commit
+          fi
+          reasons=0
+          for c in ${commits}; do
+            if git log -1 --format=%B "${c}" | awk 'BEGIN{RS=""} {p=$0} END{print p}' \
+                 | grep -Eq '^[[:space:]]*Config-Change-Reason:[[:space:]]*[^[:space:]]'; then
+              reasons=$((reasons + 1))
+            fi
+          done
+          if [ "${reasons}" -lt 1 ]; then
+            echo "FAIL: no commit in ${range} has a 'Config-Change-Reason:' trailer (audit marker; see header)."
+            exit 1
+          fi
+          echo "Found a Config-Change-Reason trailer in ${reasons} commit(s) of ${range}."
+
+      - name: Config guard (repo only, no --live)
+        shell: cmd
+        run: python -B tools/config_guard.py || exit /b 1
