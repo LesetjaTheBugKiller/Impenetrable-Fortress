@@ -1,6 +1,27 @@
 #ifndef RECEIVER_POSITION_MANAGEMENT_MQH
 #define RECEIVER_POSITION_MANAGEMENT_MQH
 
+// Per-ticket backstop retry throttle and one-time notices, declared first so
+// ForgetVirtualStop can clear them.
+ulong g_backstopRetryTickets[];
+datetime g_backstopRetryTimes[];
+ulong g_unprotectableNoticed[];
+string g_noTickSymbols[];
+datetime g_noTickTimes[];
+
+void ForgetBackstopTracking(const ulong ticket)
+{
+   for(int index = ArraySize(g_backstopRetryTickets) - 1; index >= 0; index--)
+   {
+      if(g_backstopRetryTickets[index] != ticket) continue;
+      ArrayRemove(g_backstopRetryTickets, index, 1);
+      ArrayRemove(g_backstopRetryTimes, index, 1);
+   }
+   for(int index = ArraySize(g_unprotectableNoticed) - 1; index >= 0; index--)
+      if(g_unprotectableNoticed[index] == ticket)
+         ArrayRemove(g_unprotectableNoticed, index, 1);
+}
+
 int IndexOfTicket(const ulong ticket)
 {
    for(int index = 0; index < ArraySize(gTickets); index++)
@@ -33,6 +54,9 @@ void RememberVirtualStop(const ulong ticket, const long type, const double stop,
    GlobalVariableSet(VirtualStopKey(ticket), stop);
    if(riskPoints > 0.0)
       GlobalVariableSet(VirtualRiskKey(ticket), riskPoints);
+   // Write to disk now; MT5 otherwise saves globals only on a clean shutdown,
+   // so a crash would lose the silent stop.
+   GlobalVariablesFlush();
 }
 
 double VirtualStopPrice(const ulong ticket)
@@ -84,8 +108,10 @@ bool RecentlyClosedTicket(const ulong ticket)
 void ForgetVirtualStop(const ulong ticket)
 {
    RememberClosedTicket(ticket);
+   ForgetBackstopTracking(ticket);
    GlobalVariableDel(VirtualStopKey(ticket));
    GlobalVariableDel(VirtualRiskKey(ticket));
+   GlobalVariablesFlush();
    int index = IndexOfTicket(ticket);
    if(index < 0)
       return;
@@ -239,6 +265,62 @@ bool AllOurPositionsAtBE()
    return atBreakEven;
 }
 
+// A rejected backstop is retried at most every 30 s per ticket, not on every
+// 300 ms timer.
+bool BackstopRetryDue(const ulong ticket)
+{
+   datetime now = TimeCurrent();
+   for(int index = 0; index < ArraySize(g_backstopRetryTickets); index++)
+   {
+      if(g_backstopRetryTickets[index] != ticket) continue;
+      if(now - g_backstopRetryTimes[index] < 30) return false;
+      g_backstopRetryTimes[index] = now;
+      return true;
+   }
+   int count = ArraySize(g_backstopRetryTickets);
+   if(count >= 64)
+   {
+      ArrayRemove(g_backstopRetryTickets, 0, 1);
+      ArrayRemove(g_backstopRetryTimes, 0, 1);
+      count--;
+   }
+   ArrayResize(g_backstopRetryTickets, count + 1);
+   ArrayResize(g_backstopRetryTimes, count + 1);
+   g_backstopRetryTickets[count] = ticket;
+   g_backstopRetryTimes[count] = now;
+   return true;
+}
+
+// A position from before this build that is already at break-even has no
+// stored risk distance, so no backstop can be computed. Say so once.
+void NoticeUnprotectableOnce(const ulong ticket, const string symbol)
+{
+   for(int index = 0; index < ArraySize(g_unprotectableNoticed); index++)
+      if(g_unprotectableNoticed[index] == ticket) return;
+   int count = ArraySize(g_unprotectableNoticed);
+   ArrayResize(g_unprotectableNoticed, count + 1);
+   g_unprotectableNoticed[count] = ticket;
+   SendNoticeOnce(StringFormat("%s #%I64u has no broker stop and no stored risk distance; set a stop manually", symbol, ticket), 1);
+}
+
+bool NoTickWarningDue(const string symbol)
+{
+   datetime now = TimeCurrent();
+   for(int index = 0; index < ArraySize(g_noTickSymbols); index++)
+   {
+      if(g_noTickSymbols[index] != symbol) continue;
+      if(now - g_noTickTimes[index] < 30) return false;
+      g_noTickTimes[index] = now;
+      return true;
+   }
+   int count = ArraySize(g_noTickSymbols);
+   ArrayResize(g_noTickSymbols, count + 1);
+   ArrayResize(g_noTickTimes, count + 1);
+   g_noTickSymbols[count] = symbol;
+   g_noTickTimes[count] = now;
+   return true;
+}
+
 void MaintainPositions()
 {
    for(int index = 0; index < PositionsTotal(); index++)
@@ -258,10 +340,29 @@ void MaintainPositions()
       {
          double tolerance = 0.5 * GetSymbolPoint(symbol);
          bool isBuy = type == POSITION_TYPE_BUY;
+
+         // Re-seat a missing broker backstop. Use the original risk distance,
+         // because after break-even the silent stop sits on the entry price.
+         if(PositionGetDouble(POSITION_SL) <= 0.0)
+         {
+            double originalRisk = VirtualRiskPoints(ticket);
+            double basis = originalRisk > 0.0
+               ? entry + (isBuy ? -1.0 : 1.0) * originalRisk * GetSymbolPoint(symbol)
+               : virtualStop;
+            if(MathAbs(entry - basis) > tolerance)
+            {
+               if(BackstopRetryDue(ticket))
+                  EnsureBackstop(symbol, ticket, type, entry, basis, false);
+            }
+            else
+               NoticeUnprotectableOnce(ticket, symbol);
+            if(!PositionSelectByTicket(ticket)) continue;
+         }
          MqlTick tick;
          if(!SymbolInfoTick(symbol, tick))
          {
-            PrintFormat("[RX] No tick for silent stop on %s", symbol);
+            if(NoTickWarningDue(symbol))
+               PrintFormat("[RX] No tick for silent stop on %s", symbol);
             continue;
          }
          if(VirtualStopReached(type, virtualStop, tick.bid, tick.ask))
@@ -285,7 +386,10 @@ void MaintainPositions()
             if(riskPoints <= 0.0 && point > 0.0)
                riskPoints = MathAbs(entry - virtualStop) / point;
             double current = type == POSITION_TYPE_BUY ? tick.bid : tick.ask;
-            double movePoints = point > 0.0 ? MathAbs(current - entry) / point : 0.0;
+            // Only a move in the trade's favour counts toward break-even.
+            double movePoints = point > 0.0
+               ? (type == POSITION_TYPE_BUY ? current - entry : entry - current) / point
+               : 0.0;
             if(riskPoints > 0.0 && movePoints >= AutoBE_Multiplier * riskPoints - 0.5)
             {
                if(!ReceiverPositionAtBreakEven(isBuy, entry, virtualStop, tolerance))
@@ -326,7 +430,7 @@ void MaintainPositions()
          continue;
       }
       double current = type == POSITION_TYPE_BUY ? tick.bid : tick.ask;
-      double movePoints = MathAbs(current - entry) / point;
+      double movePoints = (type == POSITION_TYPE_BUY ? current - entry : entry - current) / point;
       if(movePoints >= AutoBE_Multiplier * riskPoints - 0.5)
       {
          double desiredStop = entry;

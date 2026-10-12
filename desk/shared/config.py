@@ -19,6 +19,8 @@ class DeskConfig:
     provider_link_host: str
     seal_path: Path
     source: Path
+    rdp_port_set: bool = False
+    rdp_port_force: bool = False
 
 
 def default_config_path() -> Path:
@@ -47,21 +49,35 @@ def load_config(path: Path) -> DeskConfig:
         raise DeskError(str(exc)) from exc
     if window.open_day == window.close_day and window.open_time == window.close_time:
         raise DeskError("The weekend window has no length.")
-    seal_value = values.get("SEAL_PATH", "").strip()
-    seal_path = Path(seal_value) if seal_value else _default_seal_path()
-    if not seal_path.is_absolute():
-        seal_path = (path.parent / seal_path).resolve()
+    seal_path = resolve_seal_path(values.get("SEAL_PATH", ""), path.parent)
     return DeskConfig(
         window=window,
         vps_host=values.get("VPS_HOST", "").strip(),
-        rdp_port=_port(values.get("RDP_PORT", "3389")),
+        rdp_port=_port(values.get("RDP_PORT", "").strip() or "3389"),
         rdp_timeout=_timeout(values.get("RDP_TIMEOUT_SECONDS", "5")),
         gmail_address=values.get("GMAIL_ADDRESS", "").strip(),
         provider_from=values.get("PROVIDER_FROM", "").strip(),
         provider_link_host=values.get("PROVIDER_LINK_HOST", "").strip(),
         seal_path=seal_path,
         source=path,
+        rdp_port_set=bool(values.get("RDP_PORT", "").strip()),
+        rdp_port_force=values.get("RDP_PORT_FORCE", "").strip() == "1",
     )
+
+
+def resolve_seal_path(value: str, base: Path) -> Path:
+    """SEAL_PATH as an absolute path.
+
+    Empty means %LOCALAPPDATA%\\WeekendDesk\\seal.json of the account running the command.
+    %VARIABLES% and ~ are expanded. A relative path is taken from the desk.env folder.
+    """
+    text = value.strip()
+    if not text:
+        return _default_seal_path().resolve()
+    seal_path = Path(os.path.expanduser(os.path.expandvars(text)))
+    if not seal_path.is_absolute():
+        seal_path = base / seal_path
+    return seal_path.resolve()
 
 
 def require_link_settings(config: DeskConfig) -> None:

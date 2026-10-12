@@ -5,8 +5,9 @@
 #property strict
 
 // ---- Inputs ----
-input string ServerURL = "http://0.0.0.0";  // Base URL
+input string ServerURL = "http://0.0.0.0";  // Base URL, same as the receiver's BaseURL
 input int TimeoutMs = 8000;
+const int RepeatClickGuardMs = 1500; // BUY/SELL clicks this soon after the last send are ignored (fixed, not an input)
 input string AuthToken = ""; // must match Flask AUTH_SHARED if used
 input double LotsToSend = 0.10;
 input double RiskPerTradePct = 1.0; // same risk the receiver uses for the day target
@@ -33,6 +34,7 @@ bool g_warmDone = false;
 string g_lastWarmupResult = "";
 string g_lastBoard = "";
 bool g_panelOpen = true;
+ulong g_lastSignalDoneMs = 0;
 
 // ---- Tiny JSON helpers ----
 int _Find(const string s,const string pat,const int from=0){ return StringFind(s,pat,from); }
@@ -611,16 +613,27 @@ void HandleButtonClick(const string buttonName)
   }
   if(!g_panelOpen)
     return;
+  if((buttonName == BTN_BUY || buttonName == BTN_SELL) && g_lastSignalDoneMs > 0 &&
+     GetTickCount64() - g_lastSignalDoneMs < (ulong)(RepeatClickGuardMs > 0 ? RepeatClickGuardMs : 0))
+  {
+    // Clicks queued while the panel was waiting on the server land here.
+    ObjectSetInteger(0, buttonName, OBJPROP_STATE, false);
+    SetStatus("Repeat click ignored", C'255,214,120');
+    ChartRedraw();
+    return;
+  }
   if(buttonName == BTN_BUY)
   {
     PressButton(BTN_BUY, C'46,180,110');
     SendSignal("BUY");
+    g_lastSignalDoneMs = GetTickCount64();
     ReleaseButton(BTN_BUY, C'22,140,80');
   }
   else if(buttonName == BTN_SELL)
   {
     PressButton(BTN_SELL, C'210,80,80');
     SendSignal("SELL");
+    g_lastSignalDoneMs = GetTickCount64();
     ReleaseButton(BTN_SELL, C'176,52,52');
   }
   else if(buttonName == BTN_WARM)

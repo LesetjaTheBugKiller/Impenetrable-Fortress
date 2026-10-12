@@ -105,11 +105,9 @@ All responses are JSON. Routes marked **authenticated** require the configured `
 | `GET /ack` | Yes | Clears the pending signal. |
 
 The receiver posts state to `/receiver-state` about once per second and continues polling `/next`. The snapshot contains `receiverId`, `dayStartBalance`, `currentBalance`, `dailyClosedNet`, `lossesToday`, `spikesToday`, `secondsSinceLastLoss` (`-1` means no loss today), `scheduleOpen`, and `allPositionsAtBreakEven`. The server caches the latest snapshot and returns `changed_fields`/`changed_summary` on each post; the receiver logs only changed parameters, while unchanged posts still refresh the freshness timer. `/signal` is rejected unless a recent receiver snapshot passes the server-configured gates and the Lichess check passes. `/next` re-evaluates the latest receiver state before returning a queued signal; when state is stale or a gate is closed it returns an empty result and does not acknowledge the queued signal. Keep the receiver attached and publishing state before submitting signals.
-////////////////////////////////////////////////////////////////////////mmmmmmmmm
 The `RECEIVER_*` limits are enforced only by the server. The receiver reports account, schedule, and position facts and sizes orders from its own risk and stop-distance inputs. `SpikeThresholdPct` on the receiver defines which closes increment `spikesToday`. Schedule windows are evaluated in MT5 and reported as `scheduleOpen`. The server timestamps snapshots when received and fails closed after `RECEIVER_STATE_MAX_AGE_MS`.
 
 `POST /signal` expects a JSON body with `side` (`BUY` or `SELL`), `symbol`, and positive `lots`. `ts` is optional and defaults to the current Unix timestamp in seconds.
-/////////////////////////////////this is a nice test//////////////////////////////////////////////////////////////////////////////
 Example PowerShell request:
 
 ```powershell
@@ -147,3 +145,33 @@ Signals expire after five minutes. A successful signal is held as the single pen
 Compile `mql5/Scripts/Tests/ReceiverProtocolTests.mq5` with MetaEditor. Copy the resulting `ReceiverProtocolTests.ex5` into the terminal data folder's `MQL5/Scripts/UnitTests` directory, refresh the MT5 Navigator, then run **ReceiverProtocolTests** from Scripts. The test script prints each assertion and a final failure count in the terminal's Experts log. These are native MQL5 tests; they are separate from `mvn test`.
 
 The MT5 source is organized as `mql5/Experts` (Sender and Receiver EAs), `mql5/Include` (shared protocol and decision logic), and `mql5/Scripts/Tests` (native unit-test script). The server remains a Maven project at the repository root, with Java sources under `src/`.
+
+## Change log
+
+Approved changes only. Reverts are recorded here too.
+
+### 2026-10-11 - Weakness Finder (John)
+
+Applied, not yet committed:
+
+- Reseal: a missing seal is now an error (exit 1, message on stderr). Files: `desk/link/commands.py`, `desk/link/__main__.py`, `desk/tests/test_reseal_missing_seal.py`.
+  The reseal task still runs as SYSTEM, so expect Last Run Result 0x1 until the run-as-user fix is approved and applied.
+- Tamper-evident RDP login log, off by default (`RDPLOG_ENABLED`). Commands: `py -3 -m desk.keeper rdp-log init|collect|verify|head`. Files: `desk/keeper/rdplog.py`, `desk/keeper/RDPLOG.md`, `desk/keeper/__main__.py`, `desk/desk.env.example`, `desk/tests/test_rdplog.py`.
+- `desk/run_all_tests.cmd`: one-step runner for all test suites, summary in `desk/test_results.log`.
+  Options: `--no-pull` (no pull, still refuses tracked changes), `--allow-dirty` (only with `--no-pull`), `CI=1`, `CI=true` or `GITHUB_ACTIONS=true` (no git checks), `RUN_LIVE_TESTS=1`, `REQUIRE_MQL5_TESTS=1` (always fails until MQL5 results are read in).
+  desk-python must run: SKIPPED or 0 tests counts as FAIL. The log says "tree not checked" instead of naming the option.
+- `desk/tests/test_tle_live.py` is skipped unless `RUN_LIVE_TESTS=1`.
+- `.gitignore`: added `desk/test_results.log`, `desk/test_output/`, `_drafts/`, `_backup_*/`, `*.log`, `desk/desk.env*` (keeps `desk/desk.env.example` and `desk/tests/fixtures/**/*.log`).
+
+### 2026-10-12 - Weakness Finder (John)
+
+Applied, not yet committed (the 2026-10-11 run_all_tests.cmd and .gitignore entries above were updated the same day):
+
+- `.gitignore`: added `.env.*` next to `.env`.
+- Reseal task now runs as the signed-in user (`/IT`, `/RL LIMITED`, no SYSTEM) and pins the absolute seal path. `install` refuses an elevated PowerShell unless `--force`. `%` and line breaks are refused in the task script. Files: `desk/shared/schedule.py`, `desk/shared/config.py`, `desk/link/__main__.py`, `desk/desk.env.example`, `desk/tests/test_reseal_as_user.py`.
+  Still to do by hand: delete the old SYSTEM task from an elevated PowerShell (`schtasks /Delete /TN WeekendDeskReseal /F`), then run `py -3 -m desk.link install` from a normal PowerShell. Until then expect Last Run Result 0x1.
+- Keeper firewall: TCP and UDP rules. Allow rules cover only this run's ports (registry listener port, RDP_PORT); block rules keep every earlier port plus 3389, capped at 4. A rule is never added when `show rule` fails, so no duplicates. RDP_PORT is checked (no ports below 1024 except 3389, no 80/135/139/445/5985/5986/8080) unless `RDP_PORT_FORCE=1`. On any keeper error (ports, netsh, desk.env, clock) it exits 1 with an ALERT, writes `%ProgramData%\WeekendDesk\keeper-status.json` and Application event 900; outside the window (or if unknown) it switches block rules on and allow rules off; inside it changes nothing. The WeekendDesk folder is locked to SYSTEM + Administrators. New: `reset-ports`, `run --scheduled` (used by the task); `install` refuses outside the window unless `--force`. Files: `desk/keeper/firewall.py`, `desk/keeper/__main__.py`, `desk/keeper/RDPLOG.md`, `desk/keeper/RECOVERY.md`, `desk/shared/config.py`, `desk/desk.env.example`, `desk/tests/test_rdp_ports.py`.
+  Still to do by hand: on the VPS, reinstall the keeper once INSIDE the open window (elevated: `py -3 -m desk.keeper install`) so the task uses `--scheduled`.
+- Removed the `open-now` override that came with the keeper firewall change (approved by Lesetja, reviewed by Vera). There is no way to open Remote Desktop outside the window any more; use the provider's web console. Files: `desk/keeper/__main__.py`, `desk/keeper/RECOVERY.md`, `desk/tests/test_rdp_ports.py`.
+  Delete any leftover `%ProgramData%\WeekendDesk\open-now.json` on the VPS; the keeper ignores it.
+- Removed two stray test lines from the HTTP API section (approved by Lesetja).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from desk.link.beacon import round_not_before
 from desk.shared.config import DeskConfig
@@ -91,7 +92,7 @@ def run_seal(config: DeskConfig, beacon, timelock, password: bytearray, stdout) 
     return 0
 
 
-def run_reseal(config: DeskConfig, beacon, timelock, stdout) -> int:
+def run_reseal(config: DeskConfig, beacon, timelock, stdout, stderr=None) -> int:
     try:
         current = beacon.now()
     except Exception:
@@ -102,7 +103,8 @@ def run_reseal(config: DeskConfig, beacon, timelock, stdout) -> int:
         stdout.write("Seal file cannot be read.\n")
         return 1
     if seal is None:
-        return 0
+        (stderr or sys.stderr).write(f"Seal file is missing: {config.seal_path}. Run: py -3 -m desk.link seal\n")
+        return 1
     if current.at < config.window.close_for(seal.window_start):
         return 0
     try:

@@ -121,6 +121,7 @@ void ReportTradeRisk(const string symbol, const string side, const double points
 }
 
 bool PlaceVisibleTakeProfit(const string symbol, const ulong ticket, const double target);
+bool EnsureBackstop(const string symbol, const ulong ticket, const long type, const double entry, const double silentStop, const bool closeOnFailure);
 
 bool SafeTradeExecute(const string symbol, const string side, double lots, double stopLossPrice, double plannedEntry)
 {
@@ -129,21 +130,45 @@ bool SafeTradeExecute(const string symbol, const string side, double lots, doubl
    double entryGuess = plannedEntry > 0.0
       ? plannedEntry
       : (isBuy ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID));
+   double plannedDistance = MathAbs(entryGuess - stopLossPrice);
    double takeProfit = ReceiverNormalizePrice(
       symbol, ReceiverTakeProfitPrice(isBuy, entryGuess, stopLossPrice, reward));
 
-   string logMessage = StringFormat("[SAFE_TRADE] %s %s Lots=%.6f SL=%.5f TP=%.5f",
-                                    side, symbol, lots, stopLossPrice, takeProfit);
+   // The silent stop stays the main exit. The broker also holds a wider
+   // backstop so the position is protected if this EA, the terminal, or the
+   // laptop stops running.
+   double backstop = 0.0;
+   if(!ReceiverBackstopStopPrice(isBuy, entryGuess, stopLossPrice, BackstopStopMultiple, backstop))
+   {
+      Print("[SAFE_TRADE] FAIL: could not compute a broker backstop stop; trade not opened");
+      LogToFile("[SAFE_TRADE_FAILED] no backstop");
+      return false;
+   }
+   backstop = ReceiverNormalizePrice(symbol, backstop);
+
+   string logMessage = StringFormat("[SAFE_TRADE] %s %s Lots=%.6f SL=%.5f TP=%.5f backstop=%.5f",
+                                    side, symbol, lots, stopLossPrice, takeProfit, backstop);
    Print(logMessage);
    LogToFile(logMessage);
 
    bool success = isBuy
-      ? Trade.Buy(lots, symbol, 0.0, 0.0, takeProfit)
-      : Trade.Sell(lots, symbol, 0.0, 0.0, takeProfit);
+      ? Trade.Buy(lots, symbol, 0.0, backstop, takeProfit)
+      : Trade.Sell(lots, symbol, 0.0, backstop, takeProfit);
    if(!success && takeProfit > 0.0 && Trade.ResultDeal() == 0)
    {
-      PrintFormat("[SAFE_TRADE] Open with TP %.5f rejected ret=%d (%s); retrying without TP",
+      PrintFormat("[SAFE_TRADE] Open with TP %.5f rejected ret=%d (%s); retrying without TP, keeping the backstop",
                   takeProfit, Trade.ResultRetcode(), Trade.ResultRetcodeDescription());
+      success = isBuy
+         ? Trade.Buy(lots, symbol, 0.0, backstop, 0.0)
+         : Trade.Sell(lots, symbol, 0.0, backstop, 0.0);
+   }
+   if(!success && Trade.ResultDeal() == 0 && Trade.ResultRetcode() == TRADE_RETCODE_INVALID_STOPS)
+   {
+      // The broker refused the stop on the order itself (for example inside its
+      // stops level). Open without it; EnsureBackstop sets it right after the
+      // fill, or closes the trade if it cannot.
+      PrintFormat("[SAFE_TRADE] Stops rejected on open (%s); opening without them and setting the backstop after the fill",
+                  Trade.ResultRetcodeDescription());
       success = isBuy
          ? Trade.Buy(lots, symbol, 0.0, 0.0, 0.0)
          : Trade.Sell(lots, symbol, 0.0, 0.0, 0.0);
@@ -181,15 +206,42 @@ bool SafeTradeExecute(const string symbol, const string side, double lots, doubl
    }
    if(positionTicket == 0 || !PositionSelectByTicket(positionTicket))
    {
-      PrintFormat("[SAFE_TRADE] Opened %s %s but the position ticket was not found", side, symbol);
+      string lost = StringFormat("Opened %s %s but the position ticket was not found; only the broker backstop protects it", side, symbol);
+      PrintFormat("[SAFE_TRADE] %s", lost);
+      LogToFile("[SAFE_TRADE] " + lost);
+      SendNoticeOnce(lost, 1);
+      g_publishStateNow = true;
       return true;
    }
 
    double entry = PositionGetDouble(POSITION_PRICE_OPEN);
    long type = (long)PositionGetInteger(POSITION_TYPE);
    double point = GetSymbolPoint(symbol);
+   // Keep the planned stop distance from the real fill, so slippage does not
+   // change the risk the lot size was calculated for.
+   if(plannedDistance > 0.0 && entry > 0.0)
+      stopLossPrice = ReceiverNormalizePrice(
+         symbol, entry + (type == POSITION_TYPE_BUY ? -1.0 : 1.0) * plannedDistance);
    double riskPoints = point > 0.0 ? MathAbs(entry - stopLossPrice) / point : 0.0;
    RememberVirtualStop(positionTicket, type, stopLossPrice, riskPoints);
+   if(!EnsureBackstop(symbol, positionTicket, type, entry, stopLossPrice, true))
+   {
+      // Re-check once after about a second: a late close or modify may still land.
+      Sleep(1000);
+      if(!PositionSelectByTicket(positionTicket))
+         return false; // The broker refused the backstop and the trade was closed; report it as not executed.
+      if(PositionGetDouble(POSITION_SL) == 0.0)
+      {
+         // Backstop and close both failed: the trade is live with only the
+         // silent stop. Report its risk so the server sees the exposure, and
+         // let MaintainPositions keep retrying the backstop.
+         ReportTradeRisk(symbol, side, riskPoints, ReceiverCashRisk(lots, riskPoints, CalculateValuePerPoint(symbol)));
+         SendNoticeOnce(StringFormat("UNPROTECTED: %s %s #%I64u has no broker stop and could not be closed", side, symbol, positionTicket), 1);
+         g_publishStateNow = true;
+         return true;
+      }
+      // A broker stop is in place after the re-check; continue as a normal fill.
+   }
    double target = ReceiverNormalizePrice(
       symbol, ReceiverTakeProfitPrice(type == POSITION_TYPE_BUY, entry, stopLossPrice, reward));
    PlaceVisibleTakeProfit(symbol, positionTicket, target);
@@ -198,6 +250,41 @@ bool SafeTradeExecute(const string symbol, const string side, double lots, doubl
    PrintFormat("[SAFE_TRADE] Silent stop %.5f take profit %.5f (1:%.0f) on #%I64u",
                stopLossPrice, target, reward, positionTicket);
    return true;
+}
+
+// A position must never be left without a broker stop. If the broker did not
+// accept the backstop on open, set it now; if that fails too, close the trade.
+bool EnsureBackstop(const string symbol, const ulong ticket, const long type, const double entry, const double silentStop, const bool closeOnFailure)
+{
+   if(ticket == 0 || !PositionSelectByTicket(ticket))
+      return false;
+   if(PositionGetDouble(POSITION_SL) > 0.0)
+      return true;
+   double backstop = 0.0;
+   bool computable = ReceiverBackstopStopPrice(type == POSITION_TYPE_BUY, entry, silentStop, BackstopStopMultiple, backstop);
+   if(computable)
+   {
+      backstop = ReceiverNormalizePrice(symbol, backstop);
+      if(Trade.PositionModify(ticket, backstop, PositionGetDouble(POSITION_TP)))
+         return true;
+   }
+   string why = computable ? StringFormat("ret=%d", Trade.ResultRetcode()) : "backstop price not computable";
+   if(!closeOnFailure)
+   {
+      // Maintenance retry: the silent stop is still watching, so keep the
+      // trade, warn, and try again on a later cycle.
+      SendNoticeOnce(StringFormat("Broker backstop missing on %s #%I64u and could not be set (%s); retrying",
+                                  symbol, ticket, why), 60);
+      return false;
+   }
+   string message = StringFormat("Broker backstop rejected on %s #%I64u (%s); closing the trade",
+                                 symbol, ticket, why);
+   Print("[SAFE_TRADE] ", message);
+   LogToFile("[SAFE_TRADE] " + message);
+   SendNoticeOnce(message, 1);
+   if(Trade.PositionClose(ticket))
+      ForgetVirtualStop(ticket);
+   return false;
 }
 
 bool PlaceVisibleTakeProfit(const string symbol, const ulong ticket, const double target)

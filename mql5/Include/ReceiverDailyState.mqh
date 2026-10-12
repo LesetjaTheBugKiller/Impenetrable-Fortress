@@ -15,6 +15,7 @@ void PersistTradingDay()
    GlobalVariableSet(prefix + "day", (double)g_dayAnchor);
    GlobalVariableSet(prefix + "start", g_equityAtDayStart);
    GlobalVariableSet(prefix + "login", (double)AccountInfoInteger(ACCOUNT_LOGIN));
+   GlobalVariablesFlush();
 }
 
 void LoadPersistedDay()
@@ -142,12 +143,16 @@ void ApplyReceiverDealToRuntime(const double net, const long closeTime, bool &wa
 
 void RebuildDailyFactsFromHistory()
 {
-   if(g_equityAtDayStart <= 0.0)
-      g_equityAtDayStart = AccountInfoDouble(ACCOUNT_BALANCE);
-
+   // With no saved day-start, derive it below as balance minus today's closed
+   // net. Setting it to the current balance here would hide today's losses.
    datetime from = g_dayAnchor > 0 ? g_dayAnchor : DayAnchor(TimeTradeServer());
    if(!HistorySelect(from, TimeTradeServer()))
+   {
+      // Any failed rebuild leaves today's facts unknown: block and retry on the
+      // next timer instead of guessing.
+      g_dayStartPending = true;
       return;
+   }
 
    int total = HistoryDealsTotal();
    if(g_equityAtDayStart <= 0.0)
@@ -174,6 +179,7 @@ void RebuildDailyFactsFromHistory()
    g_lastLossClose = 0;
    ArrayResize(g_processedDeals, 0);
    ArrayResize(g_processedCloseKeys, 0);
+   g_dayStartPending = false;
 
    for(int index = 0; index < total; index++)
    {
@@ -198,9 +204,15 @@ void RefreshTradingDay(const bool rebuildFacts)
    long previousAnchor = state.day_anchor;
    bool reset = ReceiverApplyDailyReset(state, (long)anchor, AccountInfoDouble(ACCOUNT_BALANCE));
    if(reset)
+   {
       StoreDailyState(state);
+      // First load with no saved day: the current balance already includes
+      // today's closed trades, so clear it and let the rebuild derive it.
+      if(ReceiverDayStartNeedsDerive(reset, previousAnchor))
+         g_equityAtDayStart = 0.0;
+   }
 
-   if(rebuildFacts || g_equityAtDayStart <= 0.0)
+   if(ReceiverShouldRebuildDay(rebuildFacts, g_equityAtDayStart, g_dayStartPending))
       RebuildDailyFactsFromHistory();
 
    if(reset && previousAnchor != 0)
@@ -214,7 +226,8 @@ void RefreshTradingDay(const bool rebuildFacts)
 
 string g_pendingRiskClears[];
 
-bool PostTradeRiskQuiet(const string json)
+// Returns the HTTP status, or -1 when the request never reached the server.
+int PostTradeRiskQuiet(const string json)
 {
    string headers = "Connection: close\r\nContent-Type: application/json\r\nX-Auth-Token: " + AUTH_SHARED + "\r\n";
    uchar request[];
@@ -225,7 +238,7 @@ bool PostTradeRiskQuiet(const string json)
    string responseHeaders;
    ResetLastError();
    int status = WebRequest("POST", URL_TRADE_RISK(), headers, TimeoutMs, request, response, responseHeaders);
-   return status >= 200 && status < 300;
+   return status;
 }
 
 void QueueRiskClear(const string symbol, const string side)
@@ -253,8 +266,19 @@ void FlushPendingRiskClears()
       string symbol = StringSubstr(key, 0, bar);
       string side = StringSubstr(key, bar + 1);
       string json = StringFormat("{\"symbol\":\"%s\",\"side\":\"%s\",\"closed\":true}", symbol, side);
-      if(PostTradeRiskQuiet(json))
+      int status = PostTradeRiskQuiet(json);
+      if(status >= 200 && status < 300)
          ArrayRemove(g_pendingRiskClears, index, 1);
+      else if(status == 400 || status == 404 || status == 409 || status == 410 || status == 422)
+      {
+         // The server rejected this entry itself; drop it so it cannot block the rest.
+         // Auth, timeout and rate-limit codes (401, 403, 408, 429) are retried.
+         PrintFormat("[RX] Trade-risk clear for %s rejected with HTTP %d; dropped", key, status);
+         LogToFile(StringFormat("[RISK_CLEAR_DROPPED] %s HTTP %d", key, status));
+         ArrayRemove(g_pendingRiskClears, index, 1);
+      }
+      else
+         break; // No answer, auth, rate limit or server error; retry next cycle.
    }
 }
 
