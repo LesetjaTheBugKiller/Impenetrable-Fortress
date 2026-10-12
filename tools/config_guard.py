@@ -155,6 +155,8 @@ RISK_SELECTORS = [  # (file, function); the whole function is hashed
     ("mql5/Experts/Receiver.mq5", "OnInit"),
     ("mql5/Experts/Receiver.mq5", "ResolveStopPoints"),
     ("mql5/Experts/Receiver.mq5", "CheckEmergencyStop"),
+    ("mql5/Experts/Receiver.mq5", "OnTimer"),
+    ("mql5/Experts/Receiver.mq5", "CountForeignByMagic"),
     ("mql5/Experts/Sender.mq5", "PlannedDayTargetPct"),
     ("mql5/Experts/Sender.mq5", "PaintDayBar"),
     ("mql5/Experts/Sender.mq5", "HandleButtonClick"),

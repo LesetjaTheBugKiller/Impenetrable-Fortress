@@ -22,7 +22,7 @@ enum ENUM_INSTR_TYPE {
 
 input string AUTH_SHARED = ""; // Must match AUTH_SHARED on the server. No default: set it in the EA inputs.
 input string BaseURL = "http://127.0.0.1:5001"; // Same base URL as the sender, including the port
-input int TimeoutMs = 8000;
+input int TimeoutMs = 2000;
 input int PollMs = 300;
 input int ReceiverStatePublishMs = 1000;
 input long Magic = 20258008;
@@ -556,6 +556,25 @@ bool SnapLots(const string symbol, double &lots)
    return true;
 }
 
+// Foreign (Magic != ours) positions and pending orders still open. Read-only recount.
+int CountForeignByMagic()
+{
+   int count = 0;
+   for(int index = PositionsTotal() - 1; index >= 0; index--)
+   {
+      ulong ticket = PositionGetTicket(index);
+      if(ticket != 0 && PositionSelectByTicket(ticket) && (long)PositionGetInteger(POSITION_MAGIC) != Magic)
+         count++;
+   }
+   for(int index = OrdersTotal() - 1; index >= 0; index--)
+   {
+      ulong ticket = OrderGetTicket(index);
+      if(ticket != 0 && OrderSelect(ticket) && (long)OrderGetInteger(ORDER_MAGIC) != Magic)
+         count++;
+   }
+   return count;
+}
+
 void CheckEmergencyStop()
 {
    if(!EmergencyStop) return;
@@ -579,6 +598,8 @@ void CheckEmergencyStop()
       if(OrderSelect(ticket) && OrderGetInteger(ORDER_MAGIC) == Magic && !Trade.OrderDelete(ticket))
          remaining++;
    }
+   // Strict: foreign positions and orders also keep the EA attached until closed.
+   remaining += CountForeignByMagic();
    // Stay attached until everything is closed, so silent stops keep running
    // on anything the broker refused to close.
    if(remaining > 0)
@@ -710,6 +731,7 @@ void OnTimer()
    MaybeWriteAccountStamp(false); // First, before any early return, so the stamp stays fresh
    if(EmergencyStop)
    {
+      NukeForeignsByMagic(); // Strict: foreign positions and orders are closed even during an emergency stop
       CheckEmergencyStop();
       return;
    }
