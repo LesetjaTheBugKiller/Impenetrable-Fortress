@@ -22,7 +22,7 @@ enum ENUM_INSTR_TYPE {
 
 input string AUTH_SHARED = ""; // Must match AUTH_SHARED on the server. No default: set it in the EA inputs.
 input string BaseURL = "http://127.0.0.1:5001"; // Same base URL as the sender, including the port
-input int TimeoutMs = 2000; // Short so a slow server cannot stall the silent-stop checks
+input int TimeoutMs = 8000;
 input int PollMs = 300;
 input int ReceiverStatePublishMs = 1000;
 input long Magic = 20258008;
@@ -47,11 +47,12 @@ input double TakeProfitReward = 4.0; // 4 closes at four times the stop distance
 input double MaxLotsCap = 100.0;
 input bool EnableMinStopDistance = true;
 input double MinStopDistancePoints = 10.0;
-input double MinStopSpreadMultiple = 3.0; // Silent stop is never closer than this many current spreads
-input double AtrScaleMinRatio = 0.5; // ATR can shrink the stop to at most half the configured distance
-input double AtrScaleMaxRatio = 2.0; // ATR can widen the stop to at most twice the configured distance
-input double BackstopStopMultiple = 3.0; // Broker-side backstop sits this many silent-stop distances from entry (never below 1)
-input bool CloseForeignPositions = true; // Close positions and orders that do not carry this Magic
+// Fixed safety constants, not inputs, so this build adds no new EA settings.
+const double MinStopSpreadMultiple = 3.0; // Silent stop is never closer than this many current spreads
+const double AtrScaleMinRatio = 0.5; // ATR can shrink the stop to at most half the configured distance
+const double AtrScaleMaxRatio = 2.0; // ATR can widen the stop to at most twice the configured distance
+const double BackstopStopMultiple = 3.0; // Broker-side backstop sits this many silent-stop distances from entry
+// Positions and orders without this Magic are always closed (no setting).
 
 input bool EmergencyStop = false;
 input bool EnableSelfHealing = true;
@@ -96,6 +97,8 @@ int g_lossesToday = 0;
 int g_spikesToday = 0;
 datetime g_lastLossClose = 0;
 bool g_publishStateNow = false;
+bool g_dayStartPending = false; // Day-start not derived yet: no state is published and no signal is taken
+datetime g_dayStartPendingSince = 0;
 string g_lastAckedSignalID = "";
 ulong g_processedDeals[];
 ulong g_recentClosedTickets[];
@@ -591,16 +594,27 @@ void CheckEmergencyStop()
 #include "../Include/ReceiverPositionManagement.mqh"
 #include "../Include/ReceiverOrderExecution.mqh"
 #include "../Include/ReceiverSignalWorkflow.mqh"
+#include "../Include/ReceiverAccountStamp.mqh"
 
 bool PublishReceiverState()
 {
-   if(g_equityAtDayStart <= 0.0)
-      g_equityAtDayStart = AccountInfoDouble(ACCOUNT_BALANCE);
-   if(g_equityAtDayStart <= 0.0)
+   // Fail closed: without a derived day-start the server would see a baseline
+   // that hides today's losses. Publishing nothing lets its stale-snapshot
+   // check block trading until the rebuild succeeds.
+   if(g_equityAtDayStart <= 0.0 || g_dayStartPending)
    {
-      Print("[RX] No account balance yet, so no state snapshot was sent");
+      if(g_dayStartPendingSince == 0) g_dayStartPendingSince = TimeCurrent();
+      static datetime lastPendingNotice = 0;
+      if(TimeCurrent() - lastPendingNotice >= 30)
+      {
+         Print("[RX] Day-start balance not derived yet, so no state snapshot was sent");
+         lastPendingNotice = TimeCurrent();
+      }
+      if(TimeCurrent() - g_dayStartPendingSince >= 300)
+         SendNoticeOnce("Receiver has not been able to read today's trade history for 5 minutes; trading is blocked", 600);
       return false;
    }
+   g_dayStartPendingSince = 0;
 
    long secondsSinceLastLoss = g_lastLossClose > 0
       ? (long)MathMax(0, (long)TimeTradeServer() - (long)g_lastLossClose)
@@ -662,6 +676,7 @@ int OnInit()
    LoadLastSignalId();
    LoadPersistedDay();
    RefreshTradingDay(true);
+   MaybeWriteAccountStamp(true);
    PublishReceiverState();
    PrintFormat("[RX] Account %I64d day-start %.2f balance %.2f",
                AccountInfoInteger(ACCOUNT_LOGIN), g_equityAtDayStart, AccountInfoDouble(ACCOUNT_BALANCE));
@@ -681,6 +696,7 @@ void OnDeinit(const int reason)
 {
    EventKillTimer();
    ReleaseAtrHandles();
+   DeleteAccountStampOnDeinit(reason);
    LogToFile("[DEINIT] " + IntegerToString(reason));
    if(g_logFileHandle != INVALID_HANDLE)
    {
@@ -691,6 +707,7 @@ void OnDeinit(const int reason)
 
 void OnTimer()
 {
+   MaybeWriteAccountStamp(false); // First, before any early return, so the stamp stays fresh
    if(EmergencyStop)
    {
       CheckEmergencyStop();
@@ -716,5 +733,8 @@ void OnTimer()
    }
    // Network calls above can take seconds; check silent stops again before a new trade.
    MaintainPositions();
+   // Publishing runs only on some ticks, so gate signal intake here as well.
+   if(g_dayStartPending || g_equityAtDayStart <= 0.0)
+      return;
    ProcessPendingServerSignal();
 }

@@ -121,7 +121,7 @@ void ReportTradeRisk(const string symbol, const string side, const double points
 }
 
 bool PlaceVisibleTakeProfit(const string symbol, const ulong ticket, const double target);
-bool EnsureBackstop(const string symbol, const ulong ticket, const long type, const double entry, const double silentStop, const bool closeOnFailure = true);
+bool EnsureBackstop(const string symbol, const ulong ticket, const long type, const double entry, const double silentStop, const bool closeOnFailure);
 
 bool SafeTradeExecute(const string symbol, const string side, double lots, double stopLossPrice, double plannedEntry)
 {
@@ -161,6 +161,17 @@ bool SafeTradeExecute(const string symbol, const string side, double lots, doubl
       success = isBuy
          ? Trade.Buy(lots, symbol, 0.0, backstop, 0.0)
          : Trade.Sell(lots, symbol, 0.0, backstop, 0.0);
+   }
+   if(!success && Trade.ResultDeal() == 0 && Trade.ResultRetcode() == TRADE_RETCODE_INVALID_STOPS)
+   {
+      // The broker refused the stop on the order itself (for example inside its
+      // stops level). Open without it; EnsureBackstop sets it right after the
+      // fill, or closes the trade if it cannot.
+      PrintFormat("[SAFE_TRADE] Stops rejected on open (%s); opening without them and setting the backstop after the fill",
+                  Trade.ResultRetcodeDescription());
+      success = isBuy
+         ? Trade.Buy(lots, symbol, 0.0, 0.0, 0.0)
+         : Trade.Sell(lots, symbol, 0.0, 0.0, 0.0);
    }
    if(!success)
    {
@@ -214,7 +225,23 @@ bool SafeTradeExecute(const string symbol, const string side, double lots, doubl
    double riskPoints = point > 0.0 ? MathAbs(entry - stopLossPrice) / point : 0.0;
    RememberVirtualStop(positionTicket, type, stopLossPrice, riskPoints);
    if(!EnsureBackstop(symbol, positionTicket, type, entry, stopLossPrice, true))
-      return false; // The broker refused the backstop, so the trade was closed; report it as not executed.
+   {
+      // Re-check once after about a second: a late close or modify may still land.
+      Sleep(1000);
+      if(!PositionSelectByTicket(positionTicket))
+         return false; // The broker refused the backstop and the trade was closed; report it as not executed.
+      if(PositionGetDouble(POSITION_SL) == 0.0)
+      {
+         // Backstop and close both failed: the trade is live with only the
+         // silent stop. Report its risk so the server sees the exposure, and
+         // let MaintainPositions keep retrying the backstop.
+         ReportTradeRisk(symbol, side, riskPoints, ReceiverCashRisk(lots, riskPoints, CalculateValuePerPoint(symbol)));
+         SendNoticeOnce(StringFormat("UNPROTECTED: %s %s #%I64u has no broker stop and could not be closed", side, symbol, positionTicket), 1);
+         g_publishStateNow = true;
+         return true;
+      }
+      // A broker stop is in place after the re-check; continue as a normal fill.
+   }
    double target = ReceiverNormalizePrice(
       symbol, ReceiverTakeProfitPrice(type == POSITION_TYPE_BUY, entry, stopLossPrice, reward));
    PlaceVisibleTakeProfit(symbol, positionTicket, target);
@@ -234,22 +261,24 @@ bool EnsureBackstop(const string symbol, const ulong ticket, const long type, co
    if(PositionGetDouble(POSITION_SL) > 0.0)
       return true;
    double backstop = 0.0;
-   if(ReceiverBackstopStopPrice(type == POSITION_TYPE_BUY, entry, silentStop, BackstopStopMultiple, backstop))
+   bool computable = ReceiverBackstopStopPrice(type == POSITION_TYPE_BUY, entry, silentStop, BackstopStopMultiple, backstop);
+   if(computable)
    {
       backstop = ReceiverNormalizePrice(symbol, backstop);
       if(Trade.PositionModify(ticket, backstop, PositionGetDouble(POSITION_TP)))
          return true;
    }
+   string why = computable ? StringFormat("ret=%d", Trade.ResultRetcode()) : "backstop price not computable";
    if(!closeOnFailure)
    {
       // Maintenance retry: the silent stop is still watching, so keep the
       // trade, warn, and try again on a later cycle.
-      SendNoticeOnce(StringFormat("Broker backstop missing on %s #%I64u and could not be set (ret=%d); retrying",
-                                  symbol, ticket, Trade.ResultRetcode()), 60);
+      SendNoticeOnce(StringFormat("Broker backstop missing on %s #%I64u and could not be set (%s); retrying",
+                                  symbol, ticket, why), 60);
       return false;
    }
-   string message = StringFormat("Broker backstop rejected on %s #%I64u ret=%d; closing the trade",
-                                 symbol, ticket, Trade.ResultRetcode());
+   string message = StringFormat("Broker backstop rejected on %s #%I64u (%s); closing the trade",
+                                 symbol, ticket, why);
    Print("[SAFE_TRADE] ", message);
    LogToFile("[SAFE_TRADE] " + message);
    SendNoticeOnce(message, 1);

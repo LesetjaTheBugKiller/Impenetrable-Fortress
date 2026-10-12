@@ -481,6 +481,19 @@ bool ReceiverShouldResetForAccount(
    return stored_login != current_login;
 }
 
+// A reset on first load (no saved day) must derive the day-start from history,
+// because the current balance already includes today's closes. A real
+// midnight rollover keeps the current balance.
+bool ReceiverDayStartNeedsDerive(const bool reset, const long previous_anchor)
+{
+   return reset && previous_anchor == 0;
+}
+
+bool ReceiverShouldRebuildDay(const bool rebuild_requested, const double start_balance, const bool day_start_pending)
+{
+   return rebuild_requested || start_balance <= 0.0 || day_start_pending;
+}
+
 bool ReceiverApplyDailyReset(
    ReceiverDailyState &state,
    const long current_day_anchor,

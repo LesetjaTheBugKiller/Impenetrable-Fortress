@@ -5,9 +5,9 @@
 #property strict
 
 // ---- Inputs ----
-input string ServerURL = "http://127.0.0.1:5001";  // Base URL, same as the receiver's BaseURL
-input int TimeoutMs = 3000; // Short so a slow server does not freeze the panel and queue clicks
-input int RepeatClickGuardMs = 1500; // BUY/SELL clicks this soon after the last send are ignored
+input string ServerURL = "http://0.0.0.0";  // Base URL, same as the receiver's BaseURL
+input int TimeoutMs = 8000;
+const int RepeatClickGuardMs = 1500; // BUY/SELL clicks this soon after the last send are ignored (fixed, not an input)
 input string AuthToken = ""; // must match Flask AUTH_SHARED if used
 input double LotsToSend = 0.10;
 input double RiskPerTradePct = 1.0; // same risk the receiver uses for the day target

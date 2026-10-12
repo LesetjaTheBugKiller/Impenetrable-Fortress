@@ -338,6 +338,17 @@ void TestTopLevelJsonOnly()
    AssertTrue(ReceiverSignalExpired(signal, 1000, 5, age), "a signal from the future is rejected as clock skew");
 }
 
+void TestDayStartDerivation()
+{
+   AssertTrue(ReceiverDayStartNeedsDerive(true, 0), "first load with no saved day derives the day-start from history");
+   AssertTrue(!ReceiverDayStartNeedsDerive(true, 100), "a midnight rollover keeps the current balance");
+   AssertTrue(!ReceiverDayStartNeedsDerive(false, 100), "the same day does not re-derive");
+   AssertTrue(ReceiverShouldRebuildDay(false, 0.0, false), "a stale saved day or account change (no start) rebuilds");
+   AssertTrue(ReceiverShouldRebuildDay(false, 10000.0, true), "a pending day-start retries the rebuild");
+   AssertTrue(ReceiverShouldRebuildDay(true, 10000.0, false), "an explicit rebuild request rebuilds");
+   AssertTrue(!ReceiverShouldRebuildDay(false, 10000.0, false), "a known day-start does not rebuild every timer");
+}
+
 void OnStart()
 {
    TestParsesSignalAndBuildsFallbackId();
@@ -353,6 +364,7 @@ void OnStart()
    TestDailyResetTransitions();
    TestStopScaleClampAndBackstop();
    TestTopLevelJsonOnly();
+   TestDayStartDerivation();
 
    PrintFormat("ReceiverProtocolTests: %d assertions, %d failures", g_assertions, g_failures);
 }
