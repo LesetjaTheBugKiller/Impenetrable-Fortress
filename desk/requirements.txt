@@ -1,0 +1,5 @@
+# Third-party Python packages the desk needs.
+# tzdata: on Windows, zoneinfo has no system time-zone database, so without it
+# ZoneInfo('Europe/Berlin') fails ('Unknown timezone') and the window/schedule code cannot load.
+# Install with: py -3 -m pip install -r desk\requirements.txt
+tzdata==2026.3
