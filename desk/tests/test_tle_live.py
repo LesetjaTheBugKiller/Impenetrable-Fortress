@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from desk.link.beacon import Beacon
@@ -5,6 +6,10 @@ from desk.shared.errors import BeaconError, TooEarly
 from desk.link.tle import Tle, default_binary
 
 
+@unittest.skipUnless(
+    os.environ.get("RUN_LIVE_TESTS") == "1",
+    "live test: contacts the drand beacon and runs tle.exe. Set RUN_LIVE_TESTS=1 to run it.",
+)
 class TleLiveTests(unittest.TestCase):
     def test_a_future_round_stays_sealed_and_a_past_round_opens(self):
         binary = default_binary()
