@@ -245,6 +245,9 @@ rem ---------- deploy\test-deploy.sh, fake docker, no registry ----------
 :suite_deploy
 set "NAME=deploy-bash"
 if not exist "deploy\test-deploy.sh" (call :skip "No deploy\test-deploy.sh." & goto :eof)
+rem Linux-only test (systemd units, flock, setup-ubuntu.sh). Skip on the OS check alone, never on a missing bash or an error;
+rem CI runs it in the required "Test and package" job on ubuntu-latest (.github\workflows\ci.yml).
+if /i "%OS%"=="Windows_NT" (call :skip "(Linux-only; runs in CI on ubuntu-latest)" & goto :eof)
 set "GITBASH=%ProgramFiles%\Git\bin\bash.exe"
 if not exist "%GITBASH%" (call :skip "Git Bash not found at %ProgramFiles%\Git\bin\bash.exe. The WSL bash is not used." & goto :eof)
 echo Running %NAME%: bash deploy/test-deploy.sh

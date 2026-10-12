@@ -13,7 +13,7 @@
     "file:deploy/test-deploy.sh": "0656e830a166e1ec8fb9880eac1c03a45a4c745e540bf1ce205645eb34ed6a3f",
     "file:desk/link/sealfile.py": "860a775974714f4b6aa9aea7b166384438c60791109be514e7817ef640e292d8",
     "file:desk/reseal.cmd": "e195e20da59aceb04eb003a187c4142fb05e5b4160884cfb15d9a90177161bd7",
-    "file:desk/run_all_tests.cmd": "a65de5221aac1d8d7352e0d7a8faefc6b78cbf868a134e2a68b4693748e196ed",
+    "file:desk/run_all_tests.cmd": "de56fb3ca985f9cc7d159a48fc9721216725b4cd30e730848da96f164f1f781f",
     "file:desk/shared/__init__.py": "c232aa642c4e4200c282b2e7b465dd55907253b8a32e51b3c2c127272c155a64",
     "file:desk/shared/config.py": "3207df4484157fd760abe553d42a473ae238a4a83dc060ce4aa70881ad7864fd",
     "file:desk/shared/errors.py": "7d07954f99b9ca0934eb266f85d5a7a876e339e39b2fbc2f46d7461898378590",
