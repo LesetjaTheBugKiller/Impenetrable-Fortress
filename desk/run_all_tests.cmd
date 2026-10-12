@@ -15,6 +15,8 @@ rem   REQUIRE_MQL5_TESTS=1 counts the MQL5 suite as FAIL instead of SKIPPED. For
 rem   fails, because MQL5 results are not read in yet.
 rem The log never contains the option name of the dirty-tree escape; deploy.cmd refuses such logs.
 setlocal EnableExtensions EnableDelayedExpansion
+rem Save the script folder before :parse_args; plain SHIFT also shifts %0.
+set "SCRIPT_DIR=%~dp0"
 
 set "NO_PULL="
 set "ALLOW_DIRTY="
@@ -57,7 +59,7 @@ set "TREE_SUFFIX="
 if "%GIT_MODE%"=="ci" set "TREE_SUFFIX= (tree not checked: CI)"
 if "%GIT_MODE%"=="nopull" if defined ALLOW_DIRTY set "TREE_SUFFIX= (tree not checked: dirty allowed)"
 
-cd /d "%~dp0.." || (echo Could not open the project folder. & exit /b 1)
+cd /d "%SCRIPT_DIR%.." || (echo Could not open the project folder. & exit /b 1)
 set "ROOT=%CD%"
 set "LOG=%ROOT%\desk\test_results.log"
 set "OUT=%ROOT%\desk\test_output"
