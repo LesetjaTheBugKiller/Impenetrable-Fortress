@@ -536,11 +536,13 @@ start_health
 write_env
 printf '%s\n' "$DIGEST_E" > "$MOCK/latest"
 if command -v flock >/dev/null 2>&1; then
-  flock -n "$WORK/deploy.lock" -c "sleep 20" &
+  # The holder signals once it really holds the lock; a fixed ~1 s probe raced on slow runners.
+  rm -f "$WORK/lock.held"
+  flock -n "$WORK/deploy.lock" -c "touch '$WORK/lock.held'; sleep 20" &
   LOCK_PID=$!
   LOCK_HELD=0
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if ! flock -n "$WORK/deploy.lock" -c "true"; then
+  for _ in $(seq 1 100); do
+    if [[ -e "$WORK/lock.held" ]] && ! flock -n "$WORK/deploy.lock" -c "true"; then
       LOCK_HELD=1
       break
     fi
