@@ -10,7 +10,7 @@
     "decls:mql5/Scripts/Tests/ReceiverProtocolTests.mq5": "f72933226216ca02b4f3b73b2eccd9d9dd9757d28a9289323437e9e94936011f",
     "file:.gitignore": "a356b294d37231aadc04b35ca49da617dd78a7dd697288323271a7e62cda35f4",
     "file:deploy.cmd": "7ff696529d812bfde860899b1b56c1846fae3c0b451df6361c077b81595b971a",
-    "file:deploy/test-deploy.sh": "0656e830a166e1ec8fb9880eac1c03a45a4c745e540bf1ce205645eb34ed6a3f",
+    "file:deploy/test-deploy.sh": "c2f29bb8d8ae8f1c4f99b00e41f8a024b8be57367d1c0a16303477b81348f75b",
     "file:desk/link/sealfile.py": "860a775974714f4b6aa9aea7b166384438c60791109be514e7817ef640e292d8",
     "file:desk/reseal.cmd": "e195e20da59aceb04eb003a187c4142fb05e5b4160884cfb15d9a90177161bd7",
     "file:desk/run_all_tests.cmd": "de56fb3ca985f9cc7d159a48fc9721216725b4cd30e730848da96f164f1f781f",
