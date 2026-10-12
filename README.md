@@ -105,11 +105,9 @@ All responses are JSON. Routes marked **authenticated** require the configured `
 | `GET /ack` | Yes | Clears the pending signal. |
 
 The receiver posts state to `/receiver-state` about once per second and continues polling `/next`. The snapshot contains `receiverId`, `dayStartBalance`, `currentBalance`, `dailyClosedNet`, `lossesToday`, `spikesToday`, `secondsSinceLastLoss` (`-1` means no loss today), `scheduleOpen`, and `allPositionsAtBreakEven`. The server caches the latest snapshot and returns `changed_fields`/`changed_summary` on each post; the receiver logs only changed parameters, while unchanged posts still refresh the freshness timer. `/signal` is rejected unless a recent receiver snapshot passes the server-configured gates and the Lichess check passes. `/next` re-evaluates the latest receiver state before returning a queued signal; when state is stale or a gate is closed it returns an empty result and does not acknowledge the queued signal. Keep the receiver attached and publishing state before submitting signals.
-////////////////////////////////////////////////////////////////////////mmmmmmmmm
 The `RECEIVER_*` limits are enforced only by the server. The receiver reports account, schedule, and position facts and sizes orders from its own risk and stop-distance inputs. `SpikeThresholdPct` on the receiver defines which closes increment `spikesToday`. Schedule windows are evaluated in MT5 and reported as `scheduleOpen`. The server timestamps snapshots when received and fails closed after `RECEIVER_STATE_MAX_AGE_MS`.
 
 `POST /signal` expects a JSON body with `side` (`BUY` or `SELL`), `symbol`, and positive `lots`. `ts` is optional and defaults to the current Unix timestamp in seconds.
-/////////////////////////////////this is a nice test//////////////////////////////////////////////////////////////////////////////
 Example PowerShell request:
 
 ```powershell
@@ -176,3 +174,4 @@ Applied, not yet committed (the 2026-10-11 run_all_tests.cmd and .gitignore entr
   Still to do by hand: on the VPS, reinstall the keeper once INSIDE the open window (elevated: `py -3 -m desk.keeper install`) so the task uses `--scheduled`.
 - Removed the `open-now` override that came with the keeper firewall change (approved by Lesetja, reviewed by Vera). There is no way to open Remote Desktop outside the window any more; use the provider's web console. Files: `desk/keeper/__main__.py`, `desk/keeper/RECOVERY.md`, `desk/tests/test_rdp_ports.py`.
   Delete any leftover `%ProgramData%\WeekendDesk\open-now.json` on the VPS; the keeper ignores it.
+- Removed two stray test lines from the HTTP API section (approved by Lesetja).
